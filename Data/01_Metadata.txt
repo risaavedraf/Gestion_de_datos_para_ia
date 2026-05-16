@@ -1,0 +1,24 @@
+Nombre de la columna	Tipo de dato	Descripción
+trans_date_trans_time	Datetime	Fecha y hora de la transacción en formato DD-MM-AAAA HH:MM
+cc_num			String	Número de tarjeta de crédito (enmascarado/anonimizado)
+merchant		String	Nombre del comercio donde se realizó la transacción
+category		String	Categoría del gasto (ej. personal_care, food, entertainment)
+amt			Float	Monto de la transacción en dólares
+first			String	Primer nombre del titular de la tarjeta
+last			String	Apellido del titular de la tarjeta
+gender			String	Género del titular (M/F)
+street			String	Dirección del titular
+city			String	Ciudad de residencia del titular
+state			String	Estado/Provincia de residencia (código de 2 letras)
+zip			Integer	Código postal del titular
+lat			Float	Latitud de ubicación del titular
+long			Float	Longitud de ubicación del titular
+city_pop		Integer	Población de la ciudad del titular
+job			String	Ocupación/profesión del titular
+dob			String	Fecha de nacimiento del titular (DD-MM-AAAA)
+trans_num		String	Identificador único de la transacción
+unix_time		Integer	Marca de tiempo UNIX de la transacción
+merch_lat		Float	Latitud geográfica del comercio
+merch_long		Float	Longitud geográfica del comercio
+is_fraud		Integer	Variable objetivo: 1 si es fraude, 0 si es legítima
+		

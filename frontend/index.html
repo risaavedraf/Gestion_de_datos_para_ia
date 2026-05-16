@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pipeline DataOps — Detección de Fraude con Tarjetas de Crédito</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">🔍 Pipeline de Detección de Fraude</div>
+        <div class="nav-tabs">
+            <button class="tab-btn active" data-tab="overview">Overview</button>
+            <button class="tab-btn" data-tab="dataset">Dataset</button>
+            <button class="tab-btn" data-tab="architecture">Architecture</button>
+            <button class="tab-btn" data-tab="pipeline">Pipeline</button>
+            <button class="tab-btn" data-tab="pmbok">PMBOK</button>
+            <button class="tab-btn" data-tab="security">Security</button>
+            <button class="tab-btn" data-tab="cicd">CI/CD</button>
+            <button class="tab-btn" data-tab="model">Model</button>
+            <button class="tab-btn" data-tab="demo">Demo</button>
+        </div>
+    </nav>
+
+    <main class="content">
+
+        <!-- ==================== OVERVIEW ==================== -->
+        <section id="overview" class="tab-content active">
+            <div class="hero">
+                <h1>Pipeline DataOps</h1>
+                <p class="hero-subtitle">Detección de Fraude con Tarjetas de Crédito — Arquitectura Lakehouse</p>
+                <p class="hero-desc">Sistema end-to-end de detección de fraude con arquitectura Bronze/Silver/Gold, machine learning y despliegue continuo.</p>
+            </div>
+
+            <div class="kpi-grid">
+                <div class="kpi-card">
+                    <div class="kpi-icon">📊</div>
+                    <div class="kpi-value" id="kpi-total">—</div>
+                    <div class="kpi-label">Total Registros</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-icon">🚨</div>
+                    <div class="kpi-value" id="kpi-fraud-pct">—</div>
+                    <div class="kpi-label">Tasa de Fraude</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-icon">❌</div>
+                    <div class="kpi-value" id="kpi-rejected">—</div>
+                    <div class="kpi-label">Registros Rechazados</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-icon">✅</div>
+                    <div class="kpi-value" id="kpi-completeness">—</div>
+                    <div class="kpi-label">Completitud</div>
+                </div>
+            </div>
+
+            <div class="quick-actions">
+                <h2>Acciones Rápidas</h2>
+                <div class="action-buttons">
+                    <button class="btn btn-primary" onclick="switchTab('pipeline')">▶ Ejecutar Pipeline</button>
+                    <button class="btn btn-secondary" onclick="switchTab('dataset')">📊 Ver KPIs</button>
+                    <button class="btn btn-secondary" onclick="switchTab('model')">🤖 Métricas del Modelo</button>
+                </div>
+            </div>
+
+            <div class="info-cards">
+                <div class="info-card">
+                    <h3>🏗️ Arquitectura</h3>
+                    <p>Lakehouse con capas Bronze (raw), Silver (limpio) y Gold (validado). Trazabilidad completa de datos.</p>
+                </div>
+                <div class="info-card">
+                    <h3>🤖 Machine Learning</h3>
+                    <p>Modelos de detección de fraude con Logistic Regression, Random Forest y XGBoost. Selección automática del mejor modelo.</p>
+                </div>
+                <div class="info-card">
+                    <h3>🔒 Seguridad</h3>
+                    <p>Enmascaramiento PII, hashing SHA256 de datos sensibles, cumplimiento Ley 19.628 y PCI DSS.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== DATASET ==================== -->
+        <section id="dataset" class="tab-content">
+            <h2>📊 Explorador de Dataset</h2>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Total Filas</div>
+                    <div class="stat-value" id="ds-total-rows">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Columnas</div>
+                    <div class="stat-value" id="ds-total-cols">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Casos de Fraude</div>
+                    <div class="stat-value" id="ds-fraud-count">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Monto Promedio</div>
+                    <div class="stat-value" id="ds-avg-amt">—</div>
+                </div>
+            </div>
+
+            <div class="chart-row">
+                <div class="chart-container">
+                    <h3>Distribución de Fraude</h3>
+                    <canvas id="fraud-chart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <h3>Distribución por Categoría</h3>
+                    <canvas id="category-chart"></canvas>
+                </div>
+            </div>
+
+            <div class="table-section">
+                <h3>Datos de Muestra (primeras 10 filas)</h3>
+                <div class="table-wrapper">
+                    <table id="sample-table" class="data-table">
+                        <thead><tr><th>Cargando...</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="dictionary-link">
+                <button class="btn btn-secondary" onclick="loadDataDictionary()">📖 Cargar Diccionario de Datos</button>
+                <div id="data-dictionary" class="dictionary-content" style="display:none;"></div>
+            </div>
+        </section>
+
+        <!-- ==================== ARCHITECTURE ==================== -->
+        <section id="architecture" class="tab-content">
+            <h2>🏗️ Arquitectura Lakehouse</h2>
+
+            <div class="arch-diagram">
+                <div class="arch-layer bronze">
+                    <div class="arch-icon">🥉</div>
+                    <h3>Bronze</h3>
+                    <p>Ingesta de datos crudos</p>
+                    <ul>
+                        <li>CSV → Parquet</li>
+                        <li>Checksum SHA256</li>
+                        <li>Log de metadata</li>
+                        <li>Sin transformaciones</li>
+                    </ul>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-layer silver">
+                    <div class="arch-icon">🥈</div>
+                    <h3>Silver</h3>
+                    <p>Limpio y transformado</p>
+                    <ul>
+                        <li>Conversión de tipos</li>
+                        <li>Parseo de fechas</li>
+                        <li>Eliminación de PII</li>
+                        <li>Columnas derivadas</li>
+                    </ul>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-layer gold">
+                    <div class="arch-icon">🥇</div>
+                    <h3>Gold</h3>
+                    <p>Validado y listo para análisis</p>
+                    <ul>
+                        <li>Reglas estructurales</li>
+                        <li>Reglas semánticas</li>
+                        <li>Separación de rechazados</li>
+                        <li>Reporte de calidad</li>
+                    </ul>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-layer load-layer">
+                    <div class="arch-icon">🗄️</div>
+                    <h3>Load</h3>
+                    <p>Persistencia PostgreSQL</p>
+                    <ul>
+                        <li>7 tablas normalizadas</li>
+                        <li>Integridad referencial</li>
+                        <li>Deduplicación</li>
+                        <li>Logs del pipeline</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="arch-justification">
+                <h3>¿Por qué Lakehouse?</h3>
+                <div class="justification-grid">
+                    <div class="justification-card">
+                        <h4>📋 Trazabilidad</h4>
+                        <p>Cada capa preserva el origen de los datos. Bronze mantiene el raw, Silver documenta las transformaciones, Gold las validaciones.</p>
+                    </div>
+                    <div class="justification-card">
+                        <h4>🔄 Reproducibilidad</h4>
+                        <p>El pipeline puede re-ejecutarse desde cualquier capa. Si cambian las reglas de validación, solo se reprocesa Gold.</p>
+                    </div>
+                    <div class="justification-card">
+                        <h4>🛡️ Calidad</h4>
+                        <p>Separación clara entre datos crudos, limpios y validados. Los rechazados se preservan para auditoría.</p>
+                    </div>
+                    <div class="justification-card">
+                        <h4>⚡ Performance</h4>
+                        <p>Parquet columnar con compresión. Lecturas 10x más rápidas que CSV. Particionamiento natural por capa.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== PIPELINE ==================== -->
+        <section id="pipeline" class="tab-content">
+            <h2>⚙️ Control del Pipeline</h2>
+
+            <div class="pipeline-controls">
+                <div class="control-group">
+                    <label for="sample-size">Tamaño de muestra (vacío = completo):</label>
+                    <input type="number" id="sample-size" placeholder="ej: 1000" min="10" max="1500000">
+                </div>
+                <button class="btn btn-primary btn-large" onclick="runPipelineFromUI()">🚀 Ejecutar Pipeline Completo</button>
+            </div>
+
+            <div class="pipeline-stages">
+                <div class="stage-card" id="stage-bronze">
+                    <div class="stage-header">
+                        <span class="stage-icon">🥉</span>
+                        <h3>Bronze</h3>
+                        <span class="status-badge pending" id="status-bronze">⏳ Pendiente</span>
+                    </div>
+                    <div class="stage-body">
+                        <p>Ingesta CSV crudo → Parquet</p>
+                        <div id="bronze-info" class="stage-info">No data</div>
+                        <button class="btn btn-sm" onclick="runStage('bronze')">Ejecutar Bronze</button>
+                    </div>
+                </div>
+
+                <div class="stage-card" id="stage-silver">
+                    <div class="stage-header">
+                        <span class="stage-icon">🥈</span>
+                        <h3>Silver</h3>
+                        <span class="status-badge pending" id="status-silver">⏳ Pendiente</span>
+                    </div>
+                    <div class="stage-body">
+                        <p>Limpiar, transformar, derivar</p>
+                        <div id="silver-info" class="stage-info">No data</div>
+                        <button class="btn btn-sm" onclick="runStage('silver')">Ejecutar Silver</button>
+                    </div>
+                </div>
+
+                <div class="stage-card" id="stage-gold">
+                    <div class="stage-header">
+                        <span class="stage-icon">🥇</span>
+                        <h3>Gold</h3>
+                        <span class="status-badge pending" id="status-gold">⏳ Pendiente</span>
+                    </div>
+                    <div class="stage-body">
+                        <p>Validar y separar</p>
+                        <div id="gold-info" class="stage-info">No data</div>
+                        <button class="btn btn-sm" onclick="runStage('gold')">Ejecutar Gold</button>
+                    </div>
+                </div>
+
+                <div class="stage-card" id="stage-load">
+                    <div class="stage-header">
+                        <span class="stage-icon">🗄️</span>
+                        <h3>Load</h3>
+                        <span class="status-badge pending" id="status-load">⏳ Pendiente</span>
+                    </div>
+                    <div class="stage-body">
+                        <p>Insertar en PostgreSQL</p>
+                        <div id="load-info" class="stage-info">No data</div>
+                        <button class="btn btn-sm" onclick="runStage('load')">Ejecutar Load</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="log-section">
+                <h3>Log del Pipeline</h3>
+                <pre id="pipeline-log" class="log-viewer">Listo. Click en 'Ejecutar Pipeline Completo' o botones individuales.</pre>
+            </div>
+        </section>
+
+        <!-- ==================== PMBOK ==================== -->
+        <section id="pmbok" class="tab-content">
+            <h2>📋 Metodología PMBOK</h2>
+
+            <div class="pmbok-cards">
+                <div class="pmbok-card predictive">
+                    <h3>📐 Predictivo</h3>
+                    <p>Planificación detallada upfront. Alcance, cronograma y costos definidos antes de la ejecución.</p>
+                    <ul>
+                        <li>WBS completo</li>
+                        <li>Gantt chart</li>
+                        <li>Matriz de riesgos</li>
+                        <li>Control de cambios formal</li>
+                    </ul>
+                </div>
+                <div class="pmbok-card adaptive">
+                    <h3>🔄 Adaptativo (Ágil)</h3>
+                    <p>Iteraciones cortas con feedback continuo. Ideal para componentes con requisitos cambiantes.</p>
+                    <ul>
+                        <li>Sprints de 2 semanas</li>
+                        <li>Backlog priorizado</li>
+                        <li>Daily standups</li>
+                        <li>Retrospectivas</li>
+                    </ul>
+                </div>
+                <div class="pmbok-card mixto">
+                    <h3>🔀 Mixto (Hybrid)</h3>
+                    <p>Enfoque seleccionado: predictivo para infraestructura, ágil para desarrollo de código.</p>
+                    <ul>
+                        <li>Infraestructura: waterfall</li>
+                        <li>Código: ágil</li>
+                        <li>Documentación: continua</li>
+                        <li>Testing: TDD</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="wbs-section">
+                <h3>Estructura de Desglose del Trabajo (WBS)</h3>
+                <table class="wbs-table">
+                    <thead>
+                        <tr>
+                            <th>WBS ID</th>
+                            <th>Fase</th>
+                            <th>Entregable</th>
+                            <th>Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>1.0</td><td>Planificación</td><td>Propuesta, specs, diseño</td><td><span class="badge success">Completo</span></td></tr>
+                        <tr><td>2.0</td><td>Foundation</td><td>Scaffold, config, utils</td><td><span class="badge success">Completo</span></td></tr>
+                        <tr><td>3.0</td><td>Pipeline Core</td><td>Bronze, Silver, Gold, Load</td><td><span class="badge success">Completo</span></td></tr>
+                        <tr><td>4.0</td><td>Database + API</td><td>Schema, FastAPI, orchestrator</td><td><span class="badge success">Completo</span></td></tr>
+                        <tr><td>5.0</td><td>Frontend</td><td>Dashboard SPA 9 tabs</td><td><span class="badge success">Completo</span></td></tr>
+                        <tr><td>6.0</td><td>Infrastructure</td><td>Docker, CI/CD</td><td><span class="badge success">Completo</span></td></tr>
+                        <tr><td>7.0</td><td>Documentation</td><td>READMEs, diccionario, arquitectura</td><td><span class="badge success">Completo</span></td></tr>
+                        <tr><td>8.0</td><td>Testing</td><td>Validación, cleaning, API tests</td><td><span class="badge success">Completo</span></td></tr>
+                        <tr><td>9.0</td><td>ML Pipeline</td><td>Features, train, eval, predict</td><td><span class="badge success">Completo</span></td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="gantt-section">
+                <h3>Cronograma (tipo Gantt)</h3>
+                <div class="gantt-chart">
+                    <div class="gantt-row">
+                        <div class="gantt-label">Planificación</div>
+                        <div class="gantt-bar" style="width:15%; background:#22c55e;">Done</div>
+                    </div>
+                    <div class="gantt-row">
+                        <div class="gantt-label">Foundation</div>
+                        <div class="gantt-bar" style="width:15%; background:#22c55e;">Done</div>
+                    </div>
+                    <div class="gantt-row">
+                        <div class="gantt-label">Pipeline Core</div>
+                        <div class="gantt-bar" style="width:20%; background:#22c55e;">Done</div>
+                    </div>
+                    <div class="gantt-row">
+                        <div class="gantt-label">DB + API</div>
+                        <div class="gantt-bar" style="width:15%; background:#22c55e;">Done</div>
+                    </div>
+                    <div class="gantt-row">
+                        <div class="gantt-label">Frontend</div>
+                        <div class="gantt-bar" style="width:15%; background:#22c55e;">Done</div>
+                    </div>
+                    <div class="gantt-row">
+                        <div class="gantt-label">Infrastructure</div>
+                        <div class="gantt-bar" style="width:10%; background:#22c55e;">Done</div>
+                    </div>
+                    <div class="gantt-row">
+                        <div class="gantt-label">Documentation</div>
+                        <div class="gantt-bar" style="width:10%; background:#22c55e;">Done</div>
+                    </div>
+                    <div class="gantt-row">
+                        <div class="gantt-label">Testing</div>
+                        <div class="gantt-bar" style="width:10%; background:#22c55e;">Done</div>
+                    </div>
+                    <div class="gantt-row">
+                        <div class="gantt-label">ML Pipeline</div>
+                        <div class="gantt-bar" style="width:25%; background:#22c55e;">Done</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== SECURITY ==================== -->
+        <section id="security" class="tab-content">
+            <h2>🔒 Seguridad y Cumplimiento</h2>
+
+            <div class="security-grid">
+                <div class="security-card">
+                    <div class="security-icon">🔐</div>
+                    <h3>PII Enmascaramiento</h3>
+                    <p>Datos personales (nombre, dirección, fecha de nacimiento) eliminados en capa Silver. Número de tarjeta hasheado con SHA256.</p>
+                    <div class="security-detail">
+                        <code>cc_num → SHA256(cc_num) → cc_num_masked</code>
+                    </div>
+                </div>
+
+                <div class="security-card">
+                    <div class="security-icon">🛡️</div>
+                    <h3>Datos Sensibles</h3>
+                    <p>Columnas marcadas como sensibles: cc_num, gender, city, state, zip, lat, long, job, dob. Solo cc_num_masked persiste.</p>
+                    <div class="security-detail">
+                        <strong>Eliminados en Silver:</strong> first, last, street, dob
+                    </div>
+                </div>
+
+                <div class="security-card">
+                    <div class="security-icon">📋</div>
+                    <h3>Ley 19.628</h3>
+                    <p>Ley de Protección de Datos Personales (Chile). Regula el tratamiento de datos personales y establece derechos ARCO.</p>
+                    <div class="security-detail">
+                        <strong>Cumplimiento:</strong> Enmascaramiento, eliminación de PII, acceso restringido
+                    </div>
+                </div>
+
+                <div class="security-card">
+                    <div class="security-icon">📜</div>
+                    <h3>Ley 21.719</h3>
+                    <p>Ley de Protección de Datos Personales (2024). Moderniza el marco regulatorio alineándolo con GDPR.</p>
+                    <div class="security-detail">
+                        <strong>Impacto:</strong> Consentimiento explícito, reporte de brechas, DPO
+                    </div>
+                </div>
+
+                <div class="security-card">
+                    <div class="security-icon">💳</div>
+                    <h3>PCI DSS</h3>
+                    <p>Payment Card Industry Data Security Standard. Requisitos para manejo seguro de datos de tarjetas de crédito.</p>
+                    <div class="security-detail">
+                        <strong>Requisitos:</strong> Encriptar PAN, acceso mínimo necesario, auditoría
+                    </div>
+                </div>
+
+                <div class="security-card">
+                    <div class="security-icon">🔍</div>
+                    <h3>Auditoría</h3>
+                    <p>Trazabilidad completa: cada ejecución del pipeline se loggea con timestamp, stage, rows procesadas y checksum.</p>
+                    <div class="security-detail">
+                        <strong>Logs:</strong> JSON estructurado en /logs/
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== CI/CD ==================== -->
+        <section id="cicd" class="tab-content">
+            <h2>🚀 Pipeline CI/CD</h2>
+
+            <div class="cicd-flow">
+                <div class="cicd-step">
+                    <div class="cicd-icon">💻</div>
+                    <h4>GitHub</h4>
+                    <p>Push / PR</p>
+                </div>
+                <div class="cicd-arrow">→</div>
+                <div class="cicd-step">
+                    <div class="cicd-icon">⚙️</div>
+                    <h4>GitHub Actions</h4>
+                    <p>CI: pytest</p>
+                </div>
+                <div class="cicd-arrow">→</div>
+                <div class="cicd-step">
+                    <div class="cicd-icon">🐳</div>
+                    <h4>Docker Build</h4>
+                    <p>Build de imagen</p>
+                </div>
+                <div class="cicd-arrow">→</div>
+                <div class="cicd-step">
+                    <div class="cicd-icon">🌐</div>
+                    <h4>Render</h4>
+                    <p>Deploy</p>
+                </div>
+            </div>
+
+            <div class="cicd-details">
+                <div class="cicd-card">
+                    <h3>Workflow CI (ci.yml)</h3>
+                    <ul>
+                        <li>Trigger: push a main, PRs</li>
+                        <li>Python 3.11</li>
+                        <li>Instalar dependencias</li>
+                        <li>Ejecutar pytest</li>
+                        <li>Verificación de lint</li>
+                    </ul>
+                </div>
+                <div class="cicd-card">
+                    <h3>Workflow CD (deploy.yml)</h3>
+                    <ul>
+                        <li>Trigger: push a main (después de CI)</li>
+                        <li>Construir imagen Docker</li>
+                        <li>Push a registro</li>
+                        <li>Desplegar a Render vía webhook</li>
+                        <li>Verificación de health check</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="deploy-status">
+                <h3>Estado del Despliegue</h3>
+                <div class="status-grid">
+                    <div class="status-item">
+                        <span class="status-dot green"></span>
+                        <span>Pipeline CI: Configurado</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-dot green"></span>
+                        <span>Pipeline CD: Configurado</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-dot yellow"></span>
+                        <span>Render: Pendiente primer despliegue</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== MODEL ==================== -->
+        <section id="model" class="tab-content">
+            <h2>🤖 Modelo de Machine Learning</h2>
+
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-label">Accuracy</div>
+                    <div class="metric-value" id="metric-accuracy">—</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Precisión</div>
+                    <div class="metric-value" id="metric-precision">—</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Recall</div>
+                    <div class="metric-value" id="metric-recall">—</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">F1 Score</div>
+                    <div class="metric-value" id="metric-f1">—</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">ROC-AUC</div>
+                    <div class="metric-value" id="metric-roc-auc">—</div>
+                </div>
+            </div>
+
+            <div class="chart-row">
+                <div class="chart-container">
+                    <h3>Matriz de Confusión</h3>
+                    <div id="confusion-matrix" class="cm-container">Ejecutar pipeline para cargar métricas</div>
+                </div>
+                <div class="chart-container">
+                    <h3>Curva ROC</h3>
+                    <canvas id="roc-chart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-row">
+                <div class="chart-container full-width">
+                    <h3>Importancia de Features</h3>
+                    <canvas id="feature-chart"></canvas>
+                </div>
+            </div>
+
+            <div class="predict-section">
+                <h3>🔮 Predicción en Vivo</h3>
+                <div class="predict-layout">
+                    <div class="predict-form-container">
+                        <div class="predict-form">
+                            <div class="form-group">
+                                <label for="predict-amt">Monto (USD)</label>
+                                <input type="number" id="predict-amt" placeholder="ej: 150.00" step="0.01" min="0">
+                            </div>
+                            <div class="form-group">
+                                <label for="predict-hour">Hora (0-23)</label>
+                                <input type="number" id="predict-hour" placeholder="12" min="0" max="23">
+                            </div>
+                            <div class="form-group">
+                                <label for="predict-day-of-week">Día semana (0-6)</label>
+                                <input type="number" id="predict-day-of-week" placeholder="0" min="0" max="6" value="0">
+                            </div>
+                            <div class="form-group">
+                                <label for="predict-month">Mes (1-12)</label>
+                                <input type="number" id="predict-month" placeholder="6" min="1" max="12" value="6">
+                            </div>
+                            <div class="form-group">
+                                <label for="predict-category">Categoría</label>
+                                <select id="predict-category">
+                                    <option value="shopping_pos">Compras (POS)</option>
+                                    <option value="grocery_pos">Supermercado (POS)</option>
+                                    <option value="entertainment">Entretenimiento</option>
+                                    <option value="food_dining">Comida y Restaurantes</option>
+                                    <option value="gas_transport">Gas y Transporte</option>
+                                    <option value="health_fitness">Salud y Fitness</option>
+                                    <option value="home">Hogar</option>
+                                    <option value="kids_pets">Niños y Mascotas</option>
+                                    <option value="misc_net">Varios (Online)</option>
+                                    <option value="misc_pos">Varios (POS)</option>
+                                    <option value="personal_care">Cuidado Personal</option>
+                                    <option value="travel">Viajes</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="predict-gender">Género</label>
+                                <select id="predict-gender">
+                                    <option value="M">Masculino</option>
+                                    <option value="F">Femenino</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="predict-distance">Distancia (km)</label>
+                                <input type="number" id="predict-distance" placeholder="ej: 5.0" step="0.1" min="0" value="5">
+                            </div>
+                            <div class="form-group">
+                                <label for="predict-city-pop">Población ciudad</label>
+                                <input type="number" id="predict-city-pop" placeholder="ej: 100000" min="0" value="100000">
+                            </div>
+                            <div class="form-group">
+                                <label for="predict-age">Edad del titular</label>
+                                <input type="number" id="predict-age" placeholder="ej: 30" min="18" max="100" value="30">
+                            </div>
+                            <button class="btn btn-primary" onclick="predictTransaction()">🔍 Predecir</button>
+                        </div>
+                    </div>
+                    <div class="predict-result-container">
+                        <div class="predict-result-placeholder" id="predict-result-placeholder">
+                            <div class="predict-result-empty">
+                                <span class="predict-result-icon">🔮</span>
+                                <p>Ingresa los datos de la transacción y presiona <strong>Predecir</strong></p>
+                                <p class="predict-result-hint">El modelo analizará 9 features para determinar el riesgo de fraude</p>
+                            </div>
+                        </div>
+                        <div id="predict-result" class="predict-output" style="display:none;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="retrain-section">
+                <button id="retrain-btn" class="btn btn-warning btn-large" onclick="retrainModel()">🔄 Re-entrenar modelo</button>
+                <p class="retrain-note">El reentrenamiento toma 2-3 minutos. Se ejecuta con todos los datos Gold disponibles.</p>
+            </div>
+        </section>
+
+        <!-- ==================== DEMO ==================== -->
+        <section id="demo" class="tab-content">
+            <h2>🎬 Demo — Predicción de Fraude en Vivo</h2>
+
+            <div class="demo-intro">
+                <p>El modelo de Machine Learning analiza transacciones y predice si son fraudulentas. Seleccione un escenario predefinido o ingrese datos manualmente para probar el modelo en tiempo real.</p>
+            </div>
+
+            <div class="demo-scenarios">
+                <h3>📋 Escenarios de Prueba</h3>
+                <div class="scenario-buttons">
+                    <button class="btn btn-scenario btn-success" onclick="loadDemoScenario('normal')">
+                        ✅ Transacción Normal
+                        <span class="scenario-desc">$47 · 13hrs · Mar · 10km · Pob:89k · 46años</span>
+                    </button>
+                    <button class="btn btn-scenario btn-danger" onclick="loadDemoScenario('suspicious')">
+                        ⚠️ Transacción Sospechosa
+                        <span class="scenario-desc">$950 · 15hrs · Vie · 85km · Pob:45k · 50años</span>
+                    </button>
+                    <button class="btn btn-scenario btn-warning" onclick="loadDemoScenario('night')">
+                        🌙 Compra Nocturna
+                        <span class="scenario-desc">$800 · 23hrs · Dom · 90km · Pob:35k · 48años</span>
+                    </button>
+                    <button class="btn btn-scenario btn-danger" onclick="loadDemoScenario('high')">
+                        💻 Compra Online Madrugada
+                        <span class="scenario-desc">$900 · 2hrs · Lun · 100km · Pob:30k · 45años</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="demo-predict-section">
+                <h3>📝 Datos de la Transacción</h3>
+                <div class="predict-form demo-form">
+                    <div class="form-group">
+                        <label for="demo-amt">Monto (USD)</label>
+                        <input type="number" id="demo-amt" placeholder="ej: 150.00" step="0.01" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label for="demo-hour">Hora (0-23)</label>
+                        <input type="number" id="demo-hour" placeholder="ej: 14" min="0" max="23">
+                    </div>
+                    <div class="form-group">
+                        <label for="demo-day-of-week">Día semana (0=Lun, 6=Dom)</label>
+                        <input type="number" id="demo-day-of-week" placeholder="0" min="0" max="6" value="0">
+                    </div>
+                    <div class="form-group">
+                        <label for="demo-month">Mes (1-12)</label>
+                        <input type="number" id="demo-month" placeholder="6" min="1" max="12" value="6">
+                    </div>
+                    <div class="form-group">
+                        <label for="demo-category">Categoría</label>
+                        <select id="demo-category">
+                            <option value="grocery_pos">Supermercado</option>
+                            <option value="shopping_pos">Compras (POS)</option>
+                            <option value="shopping_net">Compras (Online)</option>
+                            <option value="entertainment">Entretenimiento</option>
+                            <option value="food_dining">Comida y Restaurantes</option>
+                            <option value="gas_transport">Gas y Transporte</option>
+                            <option value="health_fitness">Salud y Fitness</option>
+                            <option value="home">Hogar</option>
+                            <option value="kids_pets">Niños y Mascotas</option>
+                            <option value="misc_net">Varios (Online)</option>
+                            <option value="misc_pos">Varios (POS)</option>
+                            <option value="personal_care">Cuidado Personal</option>
+                            <option value="travel">Viajes</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="demo-gender">Género</label>
+                        <select id="demo-gender">
+                            <option value="M">Masculino</option>
+                            <option value="F">Femenino</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="demo-distance">Distancia (km)</label>
+                        <input type="number" id="demo-distance" placeholder="ej: 5.0" step="0.1" min="0" value="5">
+                    </div>
+                    <div class="form-group">
+                        <label for="demo-city-pop">Población ciudad</label>
+                        <input type="number" id="demo-city-pop" placeholder="ej: 100000" min="0" value="100000">
+                    </div>
+                    <div class="form-group">
+                        <label for="demo-age">Edad del titular</label>
+                        <input type="number" id="demo-age" placeholder="ej: 30" min="18" max="100" value="30">
+                    </div>
+                    <button class="btn btn-primary btn-large" onclick="runDemoPrediction()">🔍 Predecir</button>
+                </div>
+            </div>
+
+            <div class="demo-result-section" id="demo-result-section" style="display:none;">
+                <h3>🎯 Resultado de la Predicción</h3>
+                <div id="demo-prediction-result" class="prediction-result-card">
+                    <!-- Filled by JS -->
+                </div>
+                <div id="demo-explanation" class="demo-explanation">
+                    <!-- Filled by JS -->
+                </div>
+            </div>
+
+            <div class="demo-model-status">
+                <h3>⚙️ Estado del Modelo</h3>
+                <div id="demo-model-info" class="model-status-card">
+                    <p>Cargando estado del modelo...</p>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Ethics / AI Credits Popup -->
+    <div class="ethics-popup" id="ethics-popup">
+        <div class="ethics-header" onclick="toggleEthicsPopup()">
+            <span class="ethics-icon">🤖</span>
+            <span class="ethics-title">Créditos IA</span>
+            <span class="ethics-toggle" id="ethics-toggle">▼</span>
+        </div>
+        <div class="ethics-content" id="ethics-content">
+            <div class="ethics-section">
+                <h4>🎨 Diseño & Documentación</h4>
+                <p><strong>GPT-5.5</strong> — Diseño de arquitectura, redacción de documentación técnica, especificaciones SDD y diccionario de datos.</p>
+                <p><strong>GPT-5.4 mini</strong> — Exploración de repositorio, división de especificaciones en tareas y guardado de ionformación</p>
+            </div>
+            <div class="ethics-section">
+                <h4>💻 Implementación de Código</h4>
+                <p><strong>Mimo V2.5 Pro</strong> — Orquestador SDD, diseño de la propuesta, desarrollo del código</p>
+                <p><strong>Kimi K2.6</strong> — Diseño de especificaciones, diseño de la app, verificación del codigo </p>
+            </div>
+            <div class="ethics-section">
+                <h4>⚙️ Metodología</h4>
+                <p><strong>SDD (Spec-Driven Development)</strong> — Cambios guiados por especificaciones formales con trazabilidad completa.</p>
+                <p><strong>Gentle AI — OpenCode</strong> — Sistema de agentes colaborativos con revisiones adversariales (Judgment Day) y TDD.</p>
+            </div>
+            <div class="ethics-section">
+                <h4>📋 Uso Responsable</h4>
+                <p>Los modelos de IA se utilizaron como <strong>herramientas de asistencia</strong>, no como reemplazo del juicio humano. Todo el código fue revisado, validado y adaptado por el equipo de desarrollo.</p>
+                <p class="ethics-note">Datos: dataset sintético de fraudTest.csv · Sin PII real.</p>
+            </div>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <p>Pipeline DataOps — Credit Card Fraud Detection | Duoc UC | 2026</p>
+    </footer>
+
+    <script src="/js/app.js"></script>
+    <script src="/js/charts.js"></script>
+    <script src="/js/pipeline.js"></script>
+    <script src="/js/model.js"></script>
+</body>
+</html>

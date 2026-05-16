@@ -1,0 +1,72 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+*.whl
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data files (large)
+data/bronze/*.csv
+data/bronze/*.parquet
+data/silver/*.parquet
+data/gold/*.parquet
+!data/**/.gitkeep
+!data/README.md
+
+# Original data (preserve for compatibility)
+!Data/
+
+# Models (binary artifacts)
+#models/*.joblib
+models/*.pkl
+models/*.h5
+!models/.gitkeep
+!models/README.md
+
+# Logs
+logs/*.json
+logs/*.log
+!logs/.gitkeep
+
+# Reports
+reports/*.json
+reports/*.html
+reports/*.png
+!reports/.gitkeep
+
+# Docker
+.docker/
+
+# Docs (legacy ignore — kept for compatibility)
+docs
+!docs/README.md
+!docs/data_dictionary.md
+!docs/architecture.md
+!docs/evidencias/

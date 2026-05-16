@@ -1,0 +1,34 @@
+schema: spec-driven
+
+context: |
+  Project: Gestion_de_datos_para_ia (ITY1101 - Duoc UC)
+  Type: DataOps pipeline for credit card fraud detection
+  Declared stack: Python/FastAPI, HTML/CSS/JS frontend, PostgreSQL, Docker, GitHub Actions, Render
+  Detected stack: None (repo is empty of source code, build files, or CI config)
+  Data: fraudTest.csv with 23 columns including target is_fraud
+  Architecture: Lakehouse (Bronze/Silver/Gold) — declared, not yet implemented
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Validate Bronze/Silver/Gold layer impact for data pipeline changes
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+    - Align with Lakehouse layer boundaries
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    follow_existing: false
+    tdd: false
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
