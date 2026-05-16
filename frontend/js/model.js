@@ -255,9 +255,11 @@ async function runDemoPrediction() {
     const resultSection = document.getElementById('demo-result-section');
     const resultEl = document.getElementById('demo-prediction-result');
     const explanationEl = document.getElementById('demo-explanation');
+    const placeholderEl = document.getElementById('demo-predict-placeholder');
 
     if (resultSection) resultSection.style.display = 'block';
     if (resultEl) resultEl.innerHTML = '<div class="loading">Analizando transacción...</div>';
+    if (placeholderEl) placeholderEl.style.display = 'none';
 
     const result = await api('/api/model/predict', {
         method: 'POST',

@@ -60,6 +60,7 @@ reports/*.json
 reports/*.html
 reports/*.png
 !reports/.gitkeep
+!reports/evaluation_report.json
 
 # Docker
 .docker/

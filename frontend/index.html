@@ -511,8 +511,8 @@
                         <span>Pipeline CD: Configurado</span>
                     </div>
                     <div class="status-item">
-                        <span class="status-dot yellow"></span>
-                        <span>Render: Pendiente primer despliegue</span>
+                        <span class="status-dot green"></span>
+                        <span>Render: Activo</span>
                     </div>
                 </div>
             </div>
@@ -672,73 +672,80 @@
                 </div>
             </div>
 
-            <div class="demo-predict-section">
-                <h3>📝 Datos de la Transacción</h3>
-                <div class="predict-form demo-form">
-                    <div class="form-group">
-                        <label for="demo-amt">Monto (USD)</label>
-                        <input type="number" id="demo-amt" placeholder="ej: 150.00" step="0.01" min="0">
+            <div class="predict-section">
+                <h3>🔮 Predicción en Vivo</h3>
+                <div class="predict-layout">
+                    <div class="predict-form-container">
+                        <div class="predict-form demo-form">
+                            <div class="form-group">
+                                <label for="demo-amt">Monto (USD)</label>
+                                <input type="number" id="demo-amt" placeholder="ej: 150.00" step="0.01" min="0">
+                            </div>
+                            <div class="form-group">
+                                <label for="demo-hour">Hora (0-23)</label>
+                                <input type="number" id="demo-hour" placeholder="ej: 14" min="0" max="23">
+                            </div>
+                            <div class="form-group">
+                                <label for="demo-day-of-week">Día semana (0=Lun, 6=Dom)</label>
+                                <input type="number" id="demo-day-of-week" placeholder="0" min="0" max="6" value="0">
+                            </div>
+                            <div class="form-group">
+                                <label for="demo-month">Mes (1-12)</label>
+                                <input type="number" id="demo-month" placeholder="6" min="1" max="12" value="6">
+                            </div>
+                            <div class="form-group">
+                                <label for="demo-category">Categoría</label>
+                                <select id="demo-category">
+                                    <option value="grocery_pos">Supermercado</option>
+                                    <option value="shopping_pos">Compras (POS)</option>
+                                    <option value="shopping_net">Compras (Online)</option>
+                                    <option value="entertainment">Entretenimiento</option>
+                                    <option value="food_dining">Comida y Restaurantes</option>
+                                    <option value="gas_transport">Gas y Transporte</option>
+                                    <option value="health_fitness">Salud y Fitness</option>
+                                    <option value="home">Hogar</option>
+                                    <option value="kids_pets">Niños y Mascotas</option>
+                                    <option value="misc_net">Varios (Online)</option>
+                                    <option value="misc_pos">Varios (POS)</option>
+                                    <option value="personal_care">Cuidado Personal</option>
+                                    <option value="travel">Viajes</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="demo-gender">Género</label>
+                                <select id="demo-gender">
+                                    <option value="M">Masculino</option>
+                                    <option value="F">Femenino</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="demo-distance">Distancia (km)</label>
+                                <input type="number" id="demo-distance" placeholder="ej: 5.0" step="0.1" min="0" value="5">
+                            </div>
+                            <div class="form-group">
+                                <label for="demo-city-pop">Población ciudad</label>
+                                <input type="number" id="demo-city-pop" placeholder="ej: 100000" min="0" value="100000">
+                            </div>
+                            <div class="form-group">
+                                <label for="demo-age">Edad del titular</label>
+                                <input type="number" id="demo-age" placeholder="ej: 30" min="18" max="100" value="30">
+                            </div>
+                            <button class="btn btn-primary" onclick="runDemoPrediction()">🔍 Predecir</button>
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label for="demo-hour">Hora (0-23)</label>
-                        <input type="number" id="demo-hour" placeholder="ej: 14" min="0" max="23">
+                    <div class="predict-result-container">
+                        <div class="predict-result-placeholder" id="demo-predict-placeholder">
+                            <div class="predict-result-empty">
+                                <span class="predict-result-icon">🔮</span>
+                                <p>Ingresa los datos de la transacción y presiona <strong>Predecir</strong></p>
+                                <p class="predict-result-hint">El modelo analizará 9 features para determinar el riesgo de fraude</p>
+                            </div>
+                        </div>
+                        <div id="demo-result-section" style="display:none;">
+                            <div id="demo-prediction-result" class="predict-output"></div>
+                            <div id="demo-explanation" class="demo-explanation"></div>
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label for="demo-day-of-week">Día semana (0=Lun, 6=Dom)</label>
-                        <input type="number" id="demo-day-of-week" placeholder="0" min="0" max="6" value="0">
-                    </div>
-                    <div class="form-group">
-                        <label for="demo-month">Mes (1-12)</label>
-                        <input type="number" id="demo-month" placeholder="6" min="1" max="12" value="6">
-                    </div>
-                    <div class="form-group">
-                        <label for="demo-category">Categoría</label>
-                        <select id="demo-category">
-                            <option value="grocery_pos">Supermercado</option>
-                            <option value="shopping_pos">Compras (POS)</option>
-                            <option value="shopping_net">Compras (Online)</option>
-                            <option value="entertainment">Entretenimiento</option>
-                            <option value="food_dining">Comida y Restaurantes</option>
-                            <option value="gas_transport">Gas y Transporte</option>
-                            <option value="health_fitness">Salud y Fitness</option>
-                            <option value="home">Hogar</option>
-                            <option value="kids_pets">Niños y Mascotas</option>
-                            <option value="misc_net">Varios (Online)</option>
-                            <option value="misc_pos">Varios (POS)</option>
-                            <option value="personal_care">Cuidado Personal</option>
-                            <option value="travel">Viajes</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="demo-gender">Género</label>
-                        <select id="demo-gender">
-                            <option value="M">Masculino</option>
-                            <option value="F">Femenino</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="demo-distance">Distancia (km)</label>
-                        <input type="number" id="demo-distance" placeholder="ej: 5.0" step="0.1" min="0" value="5">
-                    </div>
-                    <div class="form-group">
-                        <label for="demo-city-pop">Población ciudad</label>
-                        <input type="number" id="demo-city-pop" placeholder="ej: 100000" min="0" value="100000">
-                    </div>
-                    <div class="form-group">
-                        <label for="demo-age">Edad del titular</label>
-                        <input type="number" id="demo-age" placeholder="ej: 30" min="18" max="100" value="30">
-                    </div>
-                    <button class="btn btn-primary btn-large" onclick="runDemoPrediction()">🔍 Predecir</button>
-                </div>
-            </div>
-
-            <div class="demo-result-section" id="demo-result-section" style="display:none;">
-                <h3>🎯 Resultado de la Predicción</h3>
-                <div id="demo-prediction-result" class="prediction-result-card">
-                    <!-- Filled by JS -->
-                </div>
-                <div id="demo-explanation" class="demo-explanation">
-                    <!-- Filled by JS -->
                 </div>
             </div>
 
