@@ -7,7 +7,11 @@ Loader is tested separately since it requires PostgreSQL.
 import sys
 import os
 import json
+import uuid
+import random
 import pytest
+import pandas as pd
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Add backend to path for imports
@@ -19,6 +23,7 @@ from config.settings import (
     GOLD_DIR,
     REJECTED_DIR,
     RAW_CSV,
+    VALID_CATEGORIES,
 )
 
 
@@ -29,10 +34,11 @@ def sample_size():
 
 
 @pytest.fixture(scope="module", autouse=True)
-def cleanup_layers():
-    """Clean up layer artifacts before and after tests."""
+def synthetic_raw_csv():
+    """Generate synthetic raw CSV for e2e tests and clean up layer artifacts."""
     import shutil
 
+    # Clean up any existing layer artifacts
     for d in [BRONZE_DIR / "fraud_bronze.parquet", BRONZE_DIR / "fraud_bronze.csv",
               BRONZE_DIR / "ingestion_metadata.json",
               SILVER_DIR / "fraud_silver.parquet", SILVER_DIR / "fraud_silver.csv",
@@ -43,12 +49,70 @@ def cleanup_layers():
         if d.exists():
             d.unlink()
 
+    # Backup existing raw CSV if present (local dev)
+    backup_path = None
+    if RAW_CSV.exists():
+        backup_path = RAW_CSV.with_suffix(".csv.backup")
+        shutil.copy2(RAW_CSV, backup_path)
+
+    # Ensure directories exist
+    BRONZE_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Generate 150 synthetic rows (more than sample_size for head() safety)
+    rows = []
+    base_date = datetime(2023, 1, 1)
+
+    for i in range(150):
+        trans_time = base_date + timedelta(hours=i)
+        rows.append({
+            "trans_date_trans_time": trans_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "cc_num": str(random.randint(4000000000000000, 4999999999999999)),
+            "merchant": f"fraud_Merchant_{i}",
+            "category": random.choice(VALID_CATEGORIES),
+            "amt": round(random.uniform(1.0, 500.0), 2),
+            "first": f"First{i}",
+            "last": f"Last{i}",
+            "gender": random.choice(["M", "F"]),
+            "street": f"{i} Main St",
+            "city": "New York",
+            "state": "NY",
+            "zip": "10001",
+            "lat": round(random.uniform(30.0, 45.0), 4),
+            "long": round(random.uniform(-120.0, -70.0), 4),
+            "city_pop": random.randint(1000, 1000000),
+            "job": "Engineer",
+            "dob": "1985-06-15",
+            "trans_num": str(uuid.uuid4()),
+            "unix_time": int(trans_time.timestamp()),
+            "merch_lat": round(random.uniform(30.0, 45.0), 4),
+            "merch_long": round(random.uniform(-120.0, -70.0), 4),
+            "is_fraud": random.choice([0, 1]),
+        })
+
+    df = pd.DataFrame(rows)
+    # Ensure cc_num is treated as string (avoid pandas inferring numeric)
+    df["cc_num"] = df["cc_num"].astype(str)
+    df.to_csv(RAW_CSV, index=False)
+
     yield
 
-    # Cleanup after tests too (optional — comment out to inspect)
-    # for d in [BRONZE_DIR, SILVER_DIR, GOLD_DIR, REJECTED_DIR]:
-    #     if d.exists():
-    #         shutil.rmtree(d)
+    # Restore original raw CSV if backed up; otherwise remove synthetic
+    if backup_path and backup_path.exists():
+        shutil.copy2(backup_path, RAW_CSV)
+        backup_path.unlink()
+    elif RAW_CSV.exists():
+        RAW_CSV.unlink()
+
+    # Clean up layer artifacts after tests
+    for d in [BRONZE_DIR / "fraud_bronze.parquet", BRONZE_DIR / "fraud_bronze.csv",
+              BRONZE_DIR / "ingestion_metadata.json",
+              SILVER_DIR / "fraud_silver.parquet", SILVER_DIR / "fraud_silver.csv",
+              SILVER_DIR / "cleaning_metadata.json",
+              GOLD_DIR / "fraud_gold.parquet", GOLD_DIR / "fraud_gold.csv",
+              GOLD_DIR / "validation_report.json",
+              REJECTED_DIR / "fraud_rejected.parquet", REJECTED_DIR / "fraud_rejected.csv"]:
+        if d.exists():
+            d.unlink()
 
 
 class TestIngestion:
