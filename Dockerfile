@@ -29,6 +29,7 @@ COPY --from=builder /install /usr/local
 COPY backend/ backend/
 COPY frontend/ frontend/
 COPY Data/ Data/
+COPY models/ models/
 COPY main.py run_stage.py .env.example ./
 
 # Create necessary directories
@@ -41,5 +42,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
-# Default command
-CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# Default command: seed data if missing, then start server
+CMD python backend/seed.py && uvicorn backend.app:app --host 0.0.0.0 --port 8000
