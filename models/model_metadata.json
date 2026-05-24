@@ -1,6 +1,6 @@
 {
   "best_model_type": "RandomForest",
-  "best_f1_cv": 0.7941,
+  "best_f1_cv": 0.6086,
   "models_compared": [
     "LogisticRegression",
     "RandomForest",
@@ -9,42 +9,42 @@
   "all_results": {
     "LogisticRegression": {
       "model_type": "LogisticRegression",
-      "cv_f1_mean": 0.0854,
-      "cv_f1_std": 0.0025,
+      "cv_f1_mean": 0.0299,
+      "cv_f1_std": 0.0008,
       "cv_scores": [
-        0.0838,
-        0.0859,
-        0.0859,
-        0.0818,
-        0.0894
+        0.0312,
+        0.0289,
+        0.0295,
+        0.0303,
+        0.0298
       ],
-      "training_duration_seconds": 78.04
+      "training_duration_seconds": 2.58
     },
     "RandomForest": {
       "model_type": "RandomForest",
-      "cv_f1_mean": 0.7941,
-      "cv_f1_std": 0.0229,
+      "cv_f1_mean": 0.6086,
+      "cv_f1_std": 0.1737,
       "cv_scores": [
-        0.8305,
-        0.789,
-        0.7711,
-        0.7709,
-        0.8087
+        0.7645,
+        0.6702,
+        0.6787,
+        0.6603,
+        0.2693
       ],
-      "training_duration_seconds": 95.98
+      "training_duration_seconds": 87.74
     },
     "XGBClassifier": {
       "model_type": "XGBClassifier",
-      "cv_f1_mean": 0.6407,
-      "cv_f1_std": 0.016,
+      "cv_f1_mean": 0.6011,
+      "cv_f1_std": 0.1117,
       "cv_scores": [
-        0.624,
-        0.6511,
-        0.6186,
-        0.6554,
-        0.6544
+        0.7481,
+        0.515,
+        0.5068,
+        0.5086,
+        0.727
       ],
-      "training_duration_seconds": 8.04
+      "training_duration_seconds": 7.53
     }
   },
   "feature_names": [
@@ -55,14 +55,18 @@
     "distance_km",
     "city_pop",
     "age_at_transaction",
+    "amt_per_city_pop",
+    "distance_x_amt",
+    "hour_is_night",
+    "category_fraud_rate",
     "category_encoded",
     "gender_encoded"
   ],
-  "n_features": 9,
+  "n_features": 13,
   "n_train_samples": 442846,
   "class_distribution": {
-    "0": 441137,
-    "1": 1709
+    "0": 440894,
+    "1": 1952
   },
   "hyperparameters": {
     "bootstrap": true,
@@ -86,22 +90,26 @@
     "warm_start": false
   },
   "model_path": "/app/models/best_model.joblib",
-  "trained_at": "2026-05-16T06:29:50.463673",
+  "trained_at": "2026-05-24T06:28:24.023512",
+  "decision_threshold": 0.3,
+  "scaler_path": null,
+  "category_fraud_rate_map": {},
+  "global_fraud_rate": null,
   "category_mapping": {
-    "personal_care": 0,
-    "health_fitness": 1,
-    "misc_pos": 2,
-    "travel": 3,
-    "kids_pets": 4,
-    "shopping_pos": 5,
-    "food_dining": 6,
-    "home": 7,
-    "entertainment": 8,
-    "shopping_net": 9,
-    "misc_net": 10,
-    "grocery_pos": 11,
-    "gas_transport": 12,
-    "grocery_net": 13
+    "entertainment": 0,
+    "food_dining": 1,
+    "gas_transport": 2,
+    "grocery_net": 3,
+    "grocery_pos": 4,
+    "health_fitness": 5,
+    "home": 6,
+    "kids_pets": 7,
+    "misc_net": 8,
+    "misc_pos": 9,
+    "personal_care": 10,
+    "shopping_net": 11,
+    "shopping_pos": 12,
+    "travel": 13
   },
   "gender_mapping": {
     "M": 0,
