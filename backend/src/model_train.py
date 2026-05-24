@@ -54,7 +54,7 @@ def train_models(
     # Define models
     models = {
         "LogisticRegression": LogisticRegression(
-            C=1.0, penalty="l2", class_weight="balanced", max_iter=1000, random_state=42
+            C=1.0, class_weight="balanced", max_iter=1000, random_state=42
         ),
         "RandomForest": RandomForestClassifier(
             n_estimators=200,
