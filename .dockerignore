@@ -26,9 +26,12 @@ logs/*.json
 reports/*.json
 reports/*.html
 reports/*.png
-models/*.pkl
-models/*.joblib
-models/*.h5
+# Models: keep trained artifacts for production, exclude everything else
+models/*
+!models/best_model.joblib
+!models/model_metadata.json
+!models/scaler.joblib
+!models/README.md
 
 # Local Judgment Day scratch artifacts
 judge-*-round*.md
