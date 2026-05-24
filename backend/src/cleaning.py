@@ -1,16 +1,21 @@
-import pandas as pd
-import numpy as np
 import json
 from datetime import datetime
 from pathlib import Path
-from config.settings import SILVER_DIR, BRONZE_DIR
-from config.logging_config import setup_logging
-from src.utils import mask_pii, haversine, calculate_age_at_transaction, generate_run_id
+import pandas as pd
+
+from backend.config.logging_config import setup_logging
+from backend.config.settings import BRONZE_DIR, SILVER_DIR
+from backend.src.utils import (
+    calculate_age_at_transaction,
+    generate_run_id,
+    haversine,
+    mask_pii,
+)
 
 logger = setup_logging("silver")
 
 
-def clean(input_path: str = None, sample_size: int = None) -> dict:
+def clean(input_path: str | None = None, sample_size: int | None = None) -> dict:
     """
     Clean and transform Bronze data to Silver layer.
 
@@ -94,10 +99,9 @@ def clean(input_path: str = None, sample_size: int = None) -> dict:
     df["cc_num_masked"] = df["cc_num"].apply(mask_pii)
     transformations.append("Created cc_num_masked (SHA256)")
 
-    # 10. Drop sensitive columns from output (keep masked versions)
-    # Keep original cc_num for Gold validation, drop names/address
-    df = df.drop(columns=["first", "last", "street", "dob"])
-    transformations.append("Dropped PII columns: first, last, street, dob")
+    # 10. Drop sensitive columns from output (keep only masked card identifier)
+    df = df.drop(columns=["cc_num", "first", "last", "street", "dob"])
+    transformations.append("Dropped PII columns: cc_num, first, last, street, dob")
 
     # Save to Silver
     SILVER_DIR.mkdir(parents=True, exist_ok=True)

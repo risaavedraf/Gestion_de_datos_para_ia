@@ -1,157 +1,159 @@
-import pandas as pd
 import json
+import math
 from datetime import datetime
 from pathlib import Path
-from config.settings import (
-    SILVER_DIR,
+
+import pandas as pd
+
+from backend.config.logging_config import setup_logging
+from backend.config.settings import (
     GOLD_DIR,
+    LAT_MAX,
+    LAT_MIN,
+    LONG_MAX,
+    LONG_MIN,
     REJECTED_DIR,
-    REQUIRED_COLUMNS,
+    SILVER_DIR,
+    SILVER_REQUIRED_COLUMNS,
     VALID_CATEGORIES,
     VALID_GENDERS,
-    LAT_MIN,
-    LAT_MAX,
-    LONG_MIN,
-    LONG_MAX,
 )
-from config.logging_config import setup_logging
-from src.utils import generate_run_id
+from backend.src.utils import generate_run_id
 
 logger = setup_logging("gold")
 
 
-def validate(input_path: str = None, sample_size: int = None) -> dict:
-    """
-    Validate Silver data and produce Gold layer + rejected records.
+def _to_float(value: object) -> float | None:
+    try:
+        if value is None:
+            return None
+        numeric_value = float(value)
+        if math.isnan(numeric_value):
+            return None
+        return numeric_value
+    except (TypeError, ValueError):
+        return None
 
-    Structural rules:
-    - Required columns exist
-    - trans_date_trans_time is valid datetime
-    - amt is numeric and > 0
-    - trans_num is unique (no duplicates)
-    - lat/long within US bounds
 
-    Semantic rules:
-    - is_fraud is 0 or 1
-    - gender is M or F
-    - category is in valid list
-    - unix_time consistent with trans_date_trans_time
-    - merch_lat/merch_long within US bounds
+def _to_int(value: object) -> int | None:
+    try:
+        if value is None:
+            return None
+        numeric_value = int(value)
+        return numeric_value
+    except (TypeError, ValueError):
+        return None
 
-    Returns:
-        dict with run_id, total, valid, rejected, rejection_breakdown, status, duration
-    """
+
+def validate(input_path: str | None = None, sample_size: int | None = None) -> dict:
+    """Validate Silver data and produce Gold + rejected datasets."""
     run_id = generate_run_id()
     start_time = datetime.now()
 
-    # Load Silver data
     source = Path(input_path) if input_path else SILVER_DIR / "fraud_silver.parquet"
     if not source.exists():
         logger.error(f"Silver data not found: {source}")
         return {"run_id": run_id, "status": "error", "error": "Silver data not found"}
 
     df = pd.read_parquet(source)
+    if sample_size and sample_size > 0:
+        df = df.head(sample_size)
+
     total = len(df)
     logger.info(f"Loaded {total} rows from Silver")
 
-    if sample_size and sample_size < len(df):
-        df = df.head(sample_size)
-        total = len(df)
+    missing_required = [col for col in SILVER_REQUIRED_COLUMNS if col not in df.columns]
+    if missing_required:
+        logger.error(f"Missing required Silver columns: {missing_required}")
+        return {
+            "run_id": run_id,
+            "status": "error",
+            "error": "Missing required columns",
+            "missing_columns": missing_required,
+        }
 
-    valid_rows = []
-    rejected_rows = []
-    rejection_breakdown = {}
+    valid_rows: list[dict] = []
+    rejected_rows: list[dict] = []
+    rejection_breakdown: dict[str, int] = {}
+    seen_trans_num: set[str] = set()
 
-    # Track seen trans_num for duplicate detection
-    seen_trans_num = set()
+    for row in df.to_dict(orient="records"):
+        errors: list[str] = []
 
-    for idx, row in df.iterrows():
-        errors = []
-
-        # === STRUCTURAL RULES ===
-
-        # Check amt > 0
-        if pd.isna(row.get("amt")) or row["amt"] <= 0:
+        amt = _to_float(row.get("amt"))
+        if amt is None or amt <= 0:
             errors.append("amt_invalid")
 
-        # Check trans_num uniqueness
-        if row.get("trans_num") in seen_trans_num:
+        trans_num = str(row.get("trans_num", ""))
+        if trans_num in seen_trans_num:
             errors.append("duplicate_trans_num")
-        seen_trans_num.add(row.get("trans_num"))
+        seen_trans_num.add(trans_num)
 
-        # Check coordinates
-        lat = row.get("lat")
-        long = row.get("long")
+        lat = _to_float(row.get("lat"))
+        lon = _to_float(row.get("long"))
         if (
-            pd.isna(lat)
-            or pd.isna(long)
-            or not (LAT_MIN <= lat <= LAT_MAX)
-            or not (LONG_MIN <= long <= LONG_MAX)
+            lat is None
+            or lon is None
+            or lat < LAT_MIN
+            or lat > LAT_MAX
+            or lon < LONG_MIN
+            or lon > LONG_MAX
         ):
             errors.append("invalid_coordinates")
 
-        merch_lat = row.get("merch_lat")
-        merch_long = row.get("merch_long")
+        merch_lat = _to_float(row.get("merch_lat"))
+        merch_lon = _to_float(row.get("merch_long"))
         if (
-            pd.isna(merch_lat)
-            or pd.isna(merch_long)
-            or not (LAT_MIN <= merch_lat <= LAT_MAX)
-            or not (LONG_MIN <= merch_long <= LONG_MAX)
+            merch_lat is None
+            or merch_lon is None
+            or merch_lat < LAT_MIN
+            or merch_lat > LAT_MAX
+            or merch_lon < LONG_MIN
+            or merch_lon > LONG_MAX
         ):
             errors.append("invalid_merch_coordinates")
 
-        # === SEMANTIC RULES ===
-
-        # Check is_fraud
-        if row.get("is_fraud") not in [0, 1]:
+        fraud_flag = _to_int(row.get("is_fraud"))
+        if fraud_flag not in (0, 1):
             errors.append("invalid_is_fraud")
 
-        # Check gender
-        if row.get("gender") not in VALID_GENDERS:
+        gender = str(row.get("gender", "")).upper().strip()
+        if gender not in VALID_GENDERS:
             errors.append("invalid_gender")
 
-        # Check category
-        if row.get("category") not in VALID_CATEGORIES:
+        category = str(row.get("category", "")).lower().strip()
+        if category not in VALID_CATEGORIES:
             errors.append("invalid_category")
 
-        # Check unix_time consistency (warn only — dataset has known drift)
-        try:
-            trans_ts = pd.Timestamp(row["trans_date_trans_time"]).timestamp()
-            unix_diff = abs(row.get("unix_time", 0) - trans_ts)
-            if unix_diff > 86400:  # More than 24h difference
-                # Known dataset characteristic: unix_time and trans_date_trans_time
-                # may differ significantly. Log as warning, not rejection.
-                pass
-        except Exception:
+        trans_date_value = row.get("trans_date_trans_time")
+        trans_ts = pd.to_datetime(str(trans_date_value), errors="coerce")
+        if pd.isna(trans_ts):
             errors.append("datetime_parse_error")
 
-        # Categorize
-        if errors:
-            rejected_row = row.to_dict()
-            rejected_row["rejection_reason"] = "; ".join(errors)
-            rejected_row["run_id"] = run_id
-            rejected_rows.append(rejected_row)
+        row_clean = dict(row)
+        row_clean.pop("cc_num", None)
 
+        if errors:
+            row_clean["rejection_reason"] = "; ".join(errors)
+            row_clean["run_id"] = run_id
+            rejected_rows.append(row_clean)
             for error in errors:
                 rejection_breakdown[error] = rejection_breakdown.get(error, 0) + 1
         else:
-            valid_rows.append(row)
+            valid_rows.append(row_clean)
 
-    # Save valid records to Gold
-    GOLD_DIR.mkdir(parents=True, exist_ok=True)
     valid_df = pd.DataFrame(valid_rows)
+    rejected_df = pd.DataFrame(rejected_rows)
+
+    GOLD_DIR.mkdir(parents=True, exist_ok=True)
     gold_path = GOLD_DIR / "fraud_gold.parquet"
     valid_df.to_parquet(gold_path, index=False)
-    csv_path = GOLD_DIR / "fraud_gold.csv"
-    valid_df.to_csv(csv_path, index=False)
+    valid_df.to_csv(GOLD_DIR / "fraud_gold.csv", index=False)
 
-    # Save rejected records
     REJECTED_DIR.mkdir(parents=True, exist_ok=True)
-    rejected_df = pd.DataFrame(rejected_rows)
     rejected_path = REJECTED_DIR / "fraud_rejected.parquet"
     rejected_df.to_parquet(rejected_path, index=False)
-    rejected_csv = REJECTED_DIR / "fraud_rejected.csv"
-    rejected_df.to_csv(rejected_csv, index=False)
+    rejected_df.to_csv(REJECTED_DIR / "fraud_rejected.csv", index=False)
 
     duration = (datetime.now() - start_time).total_seconds()
 
@@ -161,9 +163,9 @@ def validate(input_path: str = None, sample_size: int = None) -> dict:
         "total": total,
         "valid": len(valid_rows),
         "rejected": len(rejected_rows),
-        "rejection_rate_pct": (
-            round(len(rejected_rows) / total * 100, 4) if total > 0 else 0
-        ),
+        "rejection_rate_pct": round(len(rejected_rows) / total * 100, 4)
+        if total > 0
+        else 0,
         "rejection_breakdown": rejection_breakdown,
         "gold_path": str(gold_path),
         "rejected_path": str(rejected_path),
@@ -176,7 +178,7 @@ def validate(input_path: str = None, sample_size: int = None) -> dict:
     )
 
     report_path = GOLD_DIR / "validation_report.json"
-    with open(report_path, "w") as f:
+    with open(report_path, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
 
     return result
@@ -199,12 +201,14 @@ def get_gold_stats() -> dict:
         "fraud_distribution": {
             "legit": fraud_dist.get(0, 0),
             "fraud": fraud_dist.get(1, 0),
-            "fraud_pct": round(fraud_dist.get(1, 0) / len(df) * 100, 4),
+            "fraud_pct": round(fraud_dist.get(1, 0) / len(df) * 100, 4)
+            if len(df) > 0
+            else 0.0,
         },
         "amt_stats": {
-            "min": float(df["amt"].min()),
-            "max": float(df["amt"].max()),
-            "mean": round(float(df["amt"].mean()), 2),
-            "median": round(float(df["amt"].median()), 2),
+            "min": float(df["amt"].min()) if len(df) > 0 else 0.0,
+            "max": float(df["amt"].max()) if len(df) > 0 else 0.0,
+            "mean": round(float(df["amt"].mean()), 2) if len(df) > 0 else 0.0,
+            "median": round(float(df["amt"].median()), 2) if len(df) > 0 else 0.0,
         },
     }

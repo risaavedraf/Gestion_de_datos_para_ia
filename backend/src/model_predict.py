@@ -2,15 +2,19 @@
 Model Inference Module
 Single and batch predictions with risk classification
 """
+
+from datetime import datetime
+
 import numpy as np
 import pandas as pd
-from datetime import datetime
-from config.settings import MODELS_DIR, RISK_LOW, RISK_HIGH
-from config.logging_config import setup_logging
-from src.utils import get_risk_level
-from src.model_train import load_model, load_metadata
+
+from backend.config.logging_config import setup_logging
+from backend.config.settings import MODEL_DECISION_THRESHOLD, RISK_HIGH, RISK_LOW
+from backend.src.model_train import load_metadata, load_model
+from backend.src.utils import get_risk_level
 
 logger = setup_logging("model_predict")
+
 
 def predict_single(features: dict, model=None):
     """
@@ -35,27 +39,25 @@ def predict_single(features: dict, model=None):
     if not feature_names:
         raise ValueError("No feature names in model metadata")
 
-    # Build feature vector
-    feature_vector = []
-    for fname in feature_names:
-        if fname in features:
-            feature_vector.append(features[fname])
-        else:
-            # Use defaults for missing features
-            defaults = {
-                "amt": 0.0, "trans_hour": 12, "trans_day_of_week": 0,
-                "trans_month": 1, "distance_km": 0.0, "city_pop": 0,
-                "age_at_transaction": 30, "category_encoded": 0, "gender_encoded": 0
-            }
-            feature_vector.append(defaults.get(fname, 0))
-            logger.warning(f"Missing feature '{fname}', using default")
+    # Build feature vector (strict: no silent defaults)
+    missing_features = [fname for fname in feature_names if fname not in features]
+    if missing_features:
+        raise ValueError(f"Missing feature values: {missing_features}")
+
+    feature_vector = [features[fname] for fname in feature_names]
 
     X = np.array([feature_vector])
 
     # Predict
-    probability = float(model.predict_proba(X)[0][1]) if hasattr(model, "predict_proba") else float(model.predict(X)[0])
-    # Use 0.3 threshold for fraud detection (better recall on imbalanced data)
-    prediction = 1 if probability >= 0.3 else 0
+    probability = (
+        float(model.predict_proba(X)[0][1])
+        if hasattr(model, "predict_proba")
+        else float(model.predict(X)[0])
+    )
+    decision_threshold = float(
+        metadata.get("decision_threshold", MODEL_DECISION_THRESHOLD)
+    )
+    prediction = 1 if probability >= decision_threshold else 0
     risk_level = get_risk_level(probability, RISK_LOW, RISK_HIGH)
 
     result = {
@@ -63,12 +65,16 @@ def predict_single(features: dict, model=None):
         "probability": round(probability, 4),
         "risk_level": risk_level,
         "label": "FRAUD" if prediction == 1 else "LEGIT",
-        "timestamp": datetime.now().isoformat()
+        "decision_threshold": decision_threshold,
+        "timestamp": datetime.now().isoformat(),
     }
 
-    logger.info(f"Prediction: {result['label']} (prob={probability:.4f}, risk={risk_level})")
+    logger.info(
+        f"Prediction: {result['label']} (prob={probability:.4f}, risk={risk_level})"
+    )
 
     return result
+
 
 def predict_batch(df: pd.DataFrame, model=None):
     """
@@ -97,19 +103,32 @@ def predict_batch(df: pd.DataFrame, model=None):
 
     X = df[feature_names].values
 
-    probabilities = model.predict_proba(X)[:, 1] if hasattr(model, "predict_proba") else model.predict(X).astype(float)
-    # Use 0.3 threshold for fraud detection (better recall on imbalanced data)
-    predictions = (probabilities >= 0.3).astype(int)
+    probabilities = (
+        model.predict_proba(X)[:, 1]
+        if hasattr(model, "predict_proba")
+        else model.predict(X).astype(float)
+    )
+    decision_threshold = float(
+        metadata.get("decision_threshold", MODEL_DECISION_THRESHOLD)
+    )
+    predictions = (probabilities >= decision_threshold).astype(int)
 
     result_df = df.copy()
     result_df["prediction"] = predictions
     result_df["probability"] = probabilities.round(4)
-    result_df["risk_level"] = [get_risk_level(p, RISK_LOW, RISK_HIGH) for p in probabilities]
-    result_df["label"] = result_df["prediction"].map({1: "FRAUD", 0: "LEGIT"})
+    result_df["risk_level"] = [
+        get_risk_level(p, RISK_LOW, RISK_HIGH) for p in probabilities
+    ]
+    result_df["label"] = result_df["prediction"].apply(
+        lambda value: "FRAUD" if int(value) == 1 else "LEGIT"
+    )
 
-    logger.info(f"Batch prediction: {len(result_df)} rows, {result_df['prediction'].sum()} fraud detected")
+    logger.info(
+        f"Batch prediction: {len(result_df)} rows, {result_df['prediction'].sum()} fraud detected"
+    )
 
     return result_df
+
 
 def prepare_transaction_for_prediction(transaction: dict):
     """
@@ -126,6 +145,14 @@ def prepare_transaction_for_prediction(transaction: dict):
     category_mapping = metadata.get("category_mapping", {})
     gender_mapping = metadata.get("gender_mapping", {"M": 0, "F": 1})
 
+    category_value = str(transaction.get("category", "")).strip().lower()
+    gender_value = str(transaction.get("gender", "")).strip().upper()
+
+    if category_value not in category_mapping:
+        raise ValueError(f"Unknown category: '{category_value}'")
+    if gender_value not in gender_mapping:
+        raise ValueError(f"Unknown gender: '{gender_value}'")
+
     features = {
         "amt": float(transaction.get("amt", 0)),
         "trans_hour": int(transaction.get("trans_hour", 12)),
@@ -134,8 +161,8 @@ def prepare_transaction_for_prediction(transaction: dict):
         "distance_km": float(transaction.get("distance_km", 0)),
         "city_pop": int(transaction.get("city_pop", 0)),
         "age_at_transaction": int(transaction.get("age_at_transaction", 30)),
-        "category_encoded": category_mapping.get(transaction.get("category", ""), 0),
-        "gender_encoded": gender_mapping.get(transaction.get("gender", "M"), 0)
+        "category_encoded": int(category_mapping[category_value]),
+        "gender_encoded": int(gender_mapping[gender_value]),
     }
 
     return features

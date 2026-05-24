@@ -2,7 +2,7 @@ import logging
 import json
 from datetime import datetime
 from pathlib import Path
-from config.settings import LOGS_DIR, LOG_LEVEL
+from backend.config.settings import LOGS_DIR, LOG_LEVEL
 
 class JSONFormatter(logging.Formatter):
     def format(self, record):

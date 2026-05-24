@@ -32,16 +32,22 @@ env/
 .DS_Store
 Thumbs.db
 
-# Data files (large)
-data/bronze/*.csv
-data/bronze/*.parquet
-data/silver/*.parquet
-data/gold/*.parquet
-!data/**/.gitkeep
-!data/README.md
-
-# Original data (preserve for compatibility)
-!Data/
+# Data files (raw PII and generated artifacts)
+Data/**/*.csv
+Data/**/*.parquet
+Data/**/*.json
+Data/**/*.log
+Data/**/*.pkl
+Data/**/*.h5
+Data/*.csv
+Data/*.parquet
+Data/*.json
+Data/*.log
+Data/*.pkl
+Data/*.h5
+!Data/**/.gitkeep
+!Data/README.md
+!Data/01_Metadata.txt
 
 # Models (binary artifacts)
 #models/*.joblib
@@ -62,6 +68,11 @@ reports/*.png
 !reports/.gitkeep
 !reports/evaluation_report.json
 
+# Local Judgment Day / PR readiness scratch artifacts
+judge-*-round*.md
+judgment-round*-fix-report.md
+pr-readiness-review.md
+
 # Docker
 .docker/
 
@@ -71,3 +82,8 @@ docs
 !docs/data_dictionary.md
 !docs/architecture.md
 !docs/evidencias/
+
+# Local Pi runtime state
+.atl/
+.pi/
+.pi-lens/

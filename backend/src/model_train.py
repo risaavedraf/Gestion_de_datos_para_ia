@@ -2,22 +2,31 @@
 Model Training Module
 Trains multiple models and selects the best by F1-Score
 """
+
 import json
 import time
-import numpy as np
 from datetime import datetime
-from pathlib import Path
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import cross_val_score
-import joblib
 
-from config.settings import MODELS_DIR, REPORTS_DIR
-from config.logging_config import setup_logging
+import joblib
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import f1_score
+from sklearn.model_selection import cross_val_score
+
+from backend.config.logging_config import setup_logging
+from backend.config.settings import MODEL_DECISION_THRESHOLD, MODELS_DIR
 
 logger = setup_logging("model_train")
 
-def train_models(X_train, y_train, feature_names=None, category_mapping=None):
+
+def train_models(
+    X_train,
+    y_train,
+    feature_names=None,
+    category_mapping=None,
+    gender_mapping=None,
+):
     """
     Train 3 models with cross-validation, select best by F1.
 
@@ -42,11 +51,7 @@ def train_models(X_train, y_train, feature_names=None, category_mapping=None):
     # Define models
     models = {
         "LogisticRegression": LogisticRegression(
-            C=1.0,
-            penalty="l2",
-            class_weight="balanced",
-            max_iter=1000,
-            random_state=42
+            C=1.0, penalty="l2", class_weight="balanced", max_iter=1000, random_state=42
         ),
         "RandomForest": RandomForestClassifier(
             n_estimators=200,
@@ -54,14 +59,15 @@ def train_models(X_train, y_train, feature_names=None, category_mapping=None):
             min_samples_split=5,
             class_weight="balanced",
             random_state=42,
-            n_jobs=-1
+            n_jobs=-1,
         ),
-        "XGBClassifier": None  # Set below if xgboost available
+        "XGBClassifier": None,  # Set below if xgboost available
     }
 
     # Try to add XGBoost
     try:
         from xgboost import XGBClassifier
+
         models["XGBClassifier"] = XGBClassifier(
             n_estimators=200,
             max_depth=6,
@@ -69,11 +75,19 @@ def train_models(X_train, y_train, feature_names=None, category_mapping=None):
             scale_pos_weight=scale_pos,
             eval_metric="logloss",
             random_state=42,
-            use_label_encoder=False
+            use_label_encoder=False,
         )
     except ImportError:
         logger.warning("XGBoost not available, skipping")
         del models["XGBClassifier"]
+
+    def threshold_f1(estimator, X, y):
+        if hasattr(estimator, "predict_proba"):
+            probabilities = estimator.predict_proba(X)[:, 1]
+            predictions = (probabilities >= MODEL_DECISION_THRESHOLD).astype(int)
+        else:
+            predictions = estimator.predict(X)
+        return f1_score(y, predictions)
 
     # Train and evaluate each model
     all_results = {}
@@ -90,8 +104,12 @@ def train_models(X_train, y_train, feature_names=None, category_mapping=None):
 
         # Cross-validation (5-fold stratified)
         cv_scores = cross_val_score(
-            model, X_train, y_train,
-            cv=5, scoring="f1", n_jobs=-1
+            model,
+            X_train,
+            y_train,
+            cv=5,
+            scoring=threshold_f1,
+            n_jobs=-1,
         )
 
         mean_f1 = cv_scores.mean()
@@ -107,16 +125,21 @@ def train_models(X_train, y_train, feature_names=None, category_mapping=None):
             "cv_f1_mean": round(float(mean_f1), 4),
             "cv_f1_std": round(float(std_f1), 4),
             "cv_scores": [round(float(s), 4) for s in cv_scores],
-            "training_duration_seconds": round(model_duration, 2)
+            "training_duration_seconds": round(model_duration, 2),
         }
 
         all_results[name] = result
-        logger.info(f"{name}: F1={mean_f1:.4f} (+/- {std_f1:.4f}), time={model_duration:.1f}s")
+        logger.info(
+            f"{name}: F1={mean_f1:.4f} (+/- {std_f1:.4f}), time={model_duration:.1f}s"
+        )
 
         if mean_f1 > best_f1:
             best_f1 = mean_f1
             best_model = model
             best_model_type = name
+
+    if best_model is None:
+        raise ValueError("No model was trained successfully")
 
     # Save best model
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
@@ -132,12 +155,18 @@ def train_models(X_train, y_train, feature_names=None, category_mapping=None):
         "feature_names": feature_names,
         "n_features": len(feature_names) if feature_names else 0,
         "n_train_samples": len(X_train),
-        "class_distribution": {int(k): int(v) for k, v in zip(*np.unique(y_train, return_counts=True))},
+        "class_distribution": {
+            int(k): int(v)
+            for k, v in zip(*np.unique(y_train, return_counts=True), strict=False)
+        },
         "hyperparameters": best_model.get_params(),
         "model_path": str(model_path),
         "trained_at": datetime.now().isoformat(),
+        "decision_threshold": MODEL_DECISION_THRESHOLD,
         "category_mapping": category_mapping if category_mapping is not None else {},
-        "gender_mapping": {"M": 0, "F": 1}
+        "gender_mapping": gender_mapping
+        if gender_mapping is not None
+        else {"M": 0, "F": 1},
     }
 
     metadata_path = MODELS_DIR / "model_metadata.json"
@@ -146,7 +175,9 @@ def train_models(X_train, y_train, feature_names=None, category_mapping=None):
 
     duration = time.time() - start_time
 
-    logger.info(f"Best model: {best_model_type} (F1={best_f1:.4f}), saved to {model_path}")
+    logger.info(
+        f"Best model: {best_model_type} (F1={best_f1:.4f}), saved to {model_path}"
+    )
 
     return {
         "best_model": best_model,
@@ -155,10 +186,11 @@ def train_models(X_train, y_train, feature_names=None, category_mapping=None):
         "all_results": all_results,
         "model_path": str(model_path),
         "metadata": metadata,
-        "duration_seconds": round(duration, 2)
+        "duration_seconds": round(duration, 2),
     }
 
-def load_model(model_path: str = None):
+
+def load_model(model_path: str | None = None):
     """Load saved model"""
     from pathlib import Path
 
@@ -167,6 +199,7 @@ def load_model(model_path: str = None):
         raise FileNotFoundError(f"Model not found: {path}")
 
     return joblib.load(path)
+
 
 def load_metadata():
     """Load model metadata"""

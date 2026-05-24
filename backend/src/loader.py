@@ -1,10 +1,11 @@
-import pandas as pd
 import json
 from datetime import datetime
-from pathlib import Path
-from config.settings import GOLD_DIR, REJECTED_DIR, DATABASE_URL
-from config.logging_config import setup_logging
-from src.utils import generate_run_id, mask_pii
+
+import pandas as pd
+
+from backend.config.logging_config import setup_logging
+from backend.config.settings import DATABASE_URL, GOLD_DIR, REJECTED_DIR
+from backend.src.utils import generate_run_id
 
 logger = setup_logging("loader")
 
@@ -119,7 +120,7 @@ def create_tables(engine=None):
     logger.info("Database tables created/verified")
 
 
-def load(sample_size: int = None) -> dict:
+def load(sample_size: int | None = None) -> dict:
     """
     Load Gold data into PostgreSQL with deduplication.
 
@@ -158,7 +159,7 @@ def load(sample_size: int = None) -> dict:
         "job",
         "age_at_transaction",
     ]
-    customers_df = df[customer_cols].drop_duplicates(subset=["cc_num_masked"]).copy()
+    customers_df = df[customer_cols].drop_duplicates(subset="cc_num_masked").copy()
     customers_df = customers_df.rename(columns={"cc_num_masked": "customer_id"})
 
     from sqlalchemy import text
@@ -199,15 +200,20 @@ def load(sample_size: int = None) -> dict:
         conn.commit()
 
         # Query back to build ID map
-        result = conn.execute(text("SELECT merchant_id, merchant_name, category FROM merchants"))
+        result = conn.execute(
+            text("SELECT merchant_id, merchant_name, category FROM merchants")
+        )
         for row in result:
-            merchant_id_map[row[1]] = row[0]
+            merchant_id_map[(row[1], row[2])] = row[0]
 
     logger.info(f"Inserted/updated {len(merchants_df)} merchants")
 
     # 3. Insert transactions
     df["customer_id"] = df["cc_num_masked"]
-    df["merchant_id"] = df["merchant"].map(merchant_id_map)
+    df["merchant_id"] = df.apply(
+        lambda row: merchant_id_map.get((row["merchant"], row["category"])),
+        axis=1,
+    )
 
     trans_cols = [
         "trans_num",
@@ -232,10 +238,6 @@ def load(sample_size: int = None) -> dict:
 
     with engine.connect() as conn:
         # Bulk insert transactions
-        cols = ["trans_num", "customer_id", "merchant_id", "amt", "trans_date_trans_time",
-                "trans_hour", "trans_day_of_week", "trans_month", "distance_km", "is_fraud",
-                "unix_time", "merch_lat", "merch_long", "category", "city", "state"]
-
         insert_stmt = text("""
             INSERT INTO transactions (trans_num, customer_id, merchant_id, amt, trans_date_trans_time,
                 trans_hour, trans_day_of_week, trans_month, distance_km, is_fraud,
@@ -246,7 +248,7 @@ def load(sample_size: int = None) -> dict:
             ON CONFLICT (trans_num) DO NOTHING
         """)
 
-        records = trans_df[cols].to_dict(orient="records")
+        records = trans_df.to_dict("records")
         conn.execute(insert_stmt, records)
         conn.commit()
 
@@ -265,22 +267,33 @@ def load(sample_size: int = None) -> dict:
             exclude_cols = {"rejection_reason", "run_id"}
             original_data_series = rejected_df.apply(
                 lambda row: json.dumps(
-                    {k: v for k, v in row.items() if k not in exclude_cols},
-                    default=str
+                    {k: v for k, v in row.items() if k not in exclude_cols}, default=str
                 ),
-                axis=1
+                axis=1,
             )
+            trans_num_series = (
+                rejected_df["trans_num"]
+                if "trans_num" in rejected_df.columns
+                else pd.Series(["unknown"] * len(rejected_df))
+            )
+            reason_series = (
+                rejected_df["rejection_reason"]
+                if "rejection_reason" in rejected_df.columns
+                else pd.Series(["unknown"] * len(rejected_df))
+            )
+
             rejected_records = [
                 {
                     "run_id": run_id,
                     "trans_num": str(trans_num) if pd.notna(trans_num) else "unknown",
-                    "original_data": orig_data,
+                    "original_data": str(orig_data),
                     "rejection_reason": str(reason) if pd.notna(reason) else "unknown",
                 }
                 for trans_num, orig_data, reason in zip(
-                    rejected_df.get("trans_num", pd.Series(dtype=str)),
-                    original_data_series,
-                    rejected_df.get("rejection_reason", pd.Series(dtype=str)),
+                    trans_num_series.tolist(),
+                    original_data_series.tolist(),
+                    reason_series.tolist(),
+                    strict=False,
                 )
             ]
             if rejected_records:
