@@ -1,47 +1,39 @@
 # Data — Lakehouse Architecture
 
+This directory keeps safe placeholders and metadata only. Raw cardholder data and generated lakehouse artifacts are intentionally excluded from Git and Docker build contexts.
+
+## Local data policy
+
+- Do **not** commit raw CSV files, Parquet outputs, validation reports, or other generated artifacts under `Data/`.
+- Place private source data at `Data/bronze/02_fraudTest.csv` only in your local environment, or let `backend/seed.py` generate a synthetic demo dataset on first boot.
+- Docker builds do not copy `Data/`; local runtime data is provided through the `./Data:/app/Data` volume in `docker-compose.yml`.
+
 ## Layers
 
 ```
 Data/
-├── bronze/        # Raw data (immutable)
-│   ├── 02_fraudTest.csv
-│   ├── fraud_bronze.parquet
-│   └── ingestion_metadata.json
-├── silver/        # Cleaned & transformed
-│   ├── fraud_silver.parquet
-│   └── cleaning_metadata.json
-├── gold/          # Validated & curated
-│   ├── fraud_gold.parquet
-│   └── validation_report.json
-└── rejected/      # Failed validation
-    └── fraud_rejected.parquet
+├── bronze/        # Local-only raw input and Bronze outputs
+├── silver/        # Local-only cleaned/transformed outputs
+├── gold/          # Local-only validated/curated outputs
+└── rejected/      # Local-only failed validation outputs
 ```
 
-## Bronze Layer
-- Source: `02_fraudTest.csv` (555,719 rows, 23 columns)
-- Process: Read CSV, compute SHA256 checksum, save as Parquet
-- Output: Immutable copy + metadata
+## Expected local files
 
-## Silver Layer
-- Input: Bronze Parquet
-- Process: Drop technical columns, cast types, normalize strings, create derived columns
-- Derived: `trans_hour`, `trans_day_of_week`, `trans_month`, `age_at_transaction`, `distance_km`, `cc_num_masked`
-- Output: Cleaned dataset
+When running the pipeline locally, the application may create:
 
-## Gold Layer
-- Input: Silver Parquet
-- Process: Structural validation (columns, types, ranges) + Semantic validation (business rules)
-- Output: Valid records + rejected records with reasons
+- `Data/bronze/02_fraudTest.csv` — private raw input or synthetic seed data
+- `Data/bronze/fraud_bronze.parquet`
+- `Data/bronze/fraud_bronze.csv`
+- `Data/bronze/ingestion_metadata.json`
+- `Data/silver/fraud_silver.parquet`
+- `Data/silver/cleaning_metadata.json`
+- `Data/gold/fraud_gold.parquet`
+- `Data/gold/validation_report.json`
+- `Data/rejected/fraud_rejected.parquet`
+
+These files are ignored because the dataset includes sensitive PII/PAN-like fields and derived artifacts can preserve that data.
 
 ## Data Dictionary
 
-See [data_dictionary.md](../Docs/data_dictionary.md) for full column reference.
-
-## Dataset Statistics
-
-- Records: 555,719
-- Columns: 23 (original) + 6 (derived)
-- Fraud rate: 0.386% (2,145 transactions)
-- Date range: 2020-06-21 to 2020-12-31
-- Amount range: $1.00 to $22,768.11
+See [data_dictionary.md](../Docs/data_dictionary.md) for the full column reference.

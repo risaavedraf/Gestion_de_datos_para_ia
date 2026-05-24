@@ -28,7 +28,6 @@ COPY --from=builder /install /usr/local
 # Copy application code
 COPY backend/ backend/
 COPY frontend/ frontend/
-COPY Data/ Data/
 COPY models/ models/
 COPY reports/ reports/
 COPY main.py run_stage.py .env.example ./

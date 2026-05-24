@@ -1,0 +1,39 @@
+# Keep raw PII and generated lakehouse artifacts out of Docker build context
+Data/**/*.csv
+Data/**/*.parquet
+Data/**/*.json
+Data/**/*.log
+Data/**/*.pkl
+Data/**/*.h5
+Data/*.csv
+Data/*.parquet
+Data/*.json
+Data/*.log
+Data/*.pkl
+Data/*.h5
+
+# Local secrets and development state
+.env
+.env.*
+!.env.example
+.git
+.pytest_cache
+.ruff_cache
+__pycache__
+*.py[cod]
+logs/*.log
+logs/*.json
+reports/*.json
+reports/*.html
+reports/*.png
+models/*.pkl
+models/*.joblib
+models/*.h5
+
+# Local Judgment Day scratch artifacts
+judge-*-round*.md
+judgment-round*-fix-report.md
+
+.atl
+.pi
+.pi-lens
