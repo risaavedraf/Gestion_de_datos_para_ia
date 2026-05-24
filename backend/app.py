@@ -12,6 +12,7 @@ from backend.config.settings import (
     BASE_DIR,
     BRONZE_DIR,
     GOLD_DIR,
+    MODELS_DIR,
     REJECTED_DIR,
 )
 from backend.config.logging_config import setup_logging
@@ -867,6 +868,9 @@ async def train_model_endpoint(_: None = Depends(require_admin_token)):
             feature_data["feature_names"],
             category_mapping=feature_data.get("category_mapping"),
             gender_mapping=feature_data.get("gender_mapping"),
+            scaler_path=feature_data.get("scaler_path"),
+            category_fraud_rate_map=feature_data.get("category_fraud_rate_map"),
+            global_fraud_rate=feature_data.get("global_fraud_rate"),
         )
 
         # Evaluate best model
@@ -876,6 +880,21 @@ async def train_model_endpoint(_: None = Depends(require_admin_token)):
             feature_data["y_test"],
             feature_data["feature_names"],
         )
+
+        # Update metadata with tuned threshold
+        metadata_path = MODELS_DIR / "model_metadata.json"
+        if metadata_path.exists():
+            import json
+            with open(metadata_path) as f:
+                metadata = json.load(f)
+            metadata["decision_threshold"] = eval_result["tuned_threshold"]
+            metadata["tuned_f1"] = eval_result["tuned_f1"]
+            with open(metadata_path, "w") as f:
+                json.dump(metadata, f, indent=2, default=str)
+            logger.info(
+                "Updated metadata with tuned threshold: %.4f",
+                eval_result["tuned_threshold"],
+            )
 
         return {
             "status": "success",

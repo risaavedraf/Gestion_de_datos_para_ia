@@ -48,6 +48,27 @@ def evaluate_model(
         if hasattr(model, "predict_proba")
         else model.predict(X_test).astype(float)
     )
+
+    # Tune threshold via precision-recall (F1-maximizing)
+    pr_precision, pr_recall, pr_thresholds_all = precision_recall_curve(y_test, y_prob)
+    if len(pr_thresholds_all) > 0:
+        f1_scores = 2 * (pr_precision[:-1] * pr_recall[:-1]) / (
+            pr_precision[:-1] + pr_recall[:-1] + 1e-10
+        )
+        best_idx = int(np.argmax(f1_scores))
+        tuned_threshold = float(pr_thresholds_all[best_idx])
+        tuned_f1 = float(f1_scores[best_idx])
+        decision_threshold = round(tuned_threshold, 4)
+        logger.info(
+            "Threshold tuned: %.4f (F1=%.4f, default was %.4f)",
+            decision_threshold,
+            tuned_f1,
+            MODEL_DECISION_THRESHOLD,
+        )
+    else:
+        tuned_threshold = float(decision_threshold)
+        tuned_f1 = 0.0
+
     y_pred = (y_prob >= decision_threshold).astype(int)
 
     # Basic metrics
@@ -64,8 +85,8 @@ def evaluate_model(
     # ROC curve
     fpr, tpr, roc_thresholds = roc_curve(y_test, y_prob)
 
-    # Precision-Recall curve
-    pr_precision, pr_recall, pr_thresholds = precision_recall_curve(y_test, y_prob)
+    # PR curve points (reused from threshold tuning, limited to 100)
+    n_points = min(100, len(fpr))
 
     # Feature importance
     feature_importance = []
@@ -85,7 +106,6 @@ def evaluate_model(
         feature_importance.sort(key=lambda x: x["importance"], reverse=True)
 
     # Sample ROC points (for frontend chart, limit to 100 points)
-    n_points = min(100, len(fpr))
     indices = np.linspace(0, len(fpr) - 1, n_points, dtype=int)
 
     result = {
@@ -95,6 +115,8 @@ def evaluate_model(
         "f1_score": round(f1, 4),
         "roc_auc": round(roc_auc, 4),
         "decision_threshold": decision_threshold,
+        "tuned_threshold": tuned_threshold,
+        "tuned_f1": round(tuned_f1, 4),
         "confusion_matrix": {
             "tn": int(tn),
             "fp": int(fp),

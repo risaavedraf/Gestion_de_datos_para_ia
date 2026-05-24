@@ -5,15 +5,17 @@ Builds feature matrix from Gold layer data
 
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import StandardScaler
 
 from backend.config.logging_config import setup_logging
-from backend.config.settings import GOLD_DIR
+from backend.config.settings import GOLD_DIR, MODELS_DIR
 
 logger = setup_logging("features")
 
-# Feature columns used by the model
+# Base feature columns (loaded from parquet / imputed)
 NUMERIC_FEATURES = [
     "amt",
     "trans_hour",
@@ -22,6 +24,12 @@ NUMERIC_FEATURES = [
     "distance_km",
     "city_pop",
     "age_at_transaction",
+]
+# Derived interaction features (computed, not loaded)
+INTERACTION_FEATURES = [
+    "amt_per_city_pop",
+    "distance_x_amt",
+    "hour_is_night",
 ]
 CATEGORICAL_FEATURES = ["category", "gender"]
 TARGET = "is_fraud"
@@ -135,7 +143,32 @@ def build_features(
         .astype(int)
     )
 
-    feature_names = NUMERIC_FEATURES + ["category_encoded", "gender_encoded"]
+    # --- Interaction features (computed per-row, no leakage) ---
+    for df_split in (train_df, test_df):
+        df_split["amt_per_city_pop"] = df_split["amt"] / (df_split["city_pop"] + 1)
+        df_split["distance_x_amt"] = df_split["distance_km"] * df_split["amt"]
+        df_split["hour_is_night"] = (
+            (df_split["trans_hour"] < 6) | (df_split["trans_hour"] >= 22)
+        ).astype(int)
+
+    # --- Category fraud rate (TRAIN ONLY to avoid leakage) ---
+    cat_fraud = train_df.groupby("category")[TARGET].mean()
+    category_fraud_rate_map = {
+        cat: float(rate) for cat, rate in cat_fraud.to_dict().items()
+    }
+    global_fraud_rate = float(train_df[TARGET].mean())
+    for df_split in (train_df, test_df):
+        df_split["category_fraud_rate"] = (
+            df_split["category"]
+            .map(category_fraud_rate_map)
+            .fillna(global_fraud_rate)
+        )
+
+    feature_names = NUMERIC_FEATURES + INTERACTION_FEATURES + [
+        "category_fraud_rate",
+        "category_encoded",
+        "gender_encoded",
+    ]
 
     X_train = train_df[feature_names].to_numpy()
     X_test = test_df[feature_names].to_numpy()
@@ -148,6 +181,16 @@ def build_features(
     y_test = (
         pd.to_numeric(test_df[TARGET], errors="coerce").fillna(0).astype(int).to_numpy()
     )
+
+    # --- StandardScaler (fit on train only) ---
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_test = scaler.transform(X_test)
+
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    scaler_path = MODELS_DIR / "scaler.joblib"
+    joblib.dump(scaler, scaler_path)
+    logger.info("Scaler saved to %s (fit on %d train rows)", scaler_path, len(X_train))
 
     unique, counts = np.unique(y_train, return_counts=True)
     class_dist = dict(zip(unique.astype(int), counts.astype(int), strict=False))
@@ -164,6 +207,10 @@ def build_features(
         "class_distribution": class_dist,
         "category_mapping": category_mapping,
         "gender_mapping": gender_mapping,
+        "scaler": scaler,
+        "scaler_path": str(scaler_path),
+        "category_fraud_rate_map": category_fraud_rate_map,
+        "global_fraud_rate": global_fraud_rate,
     }
 
     logger.info(

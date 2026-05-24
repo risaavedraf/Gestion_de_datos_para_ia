@@ -26,6 +26,9 @@ def train_models(
     feature_names=None,
     category_mapping=None,
     gender_mapping=None,
+    scaler_path=None,
+    category_fraud_rate_map=None,
+    global_fraud_rate=None,
 ):
     """
     Train 3 models with cross-validation, select best by F1.
@@ -163,6 +166,9 @@ def train_models(
         "model_path": str(model_path),
         "trained_at": datetime.now().isoformat(),
         "decision_threshold": MODEL_DECISION_THRESHOLD,
+        "scaler_path": scaler_path,
+        "category_fraud_rate_map": category_fraud_rate_map or {},
+        "global_fraud_rate": global_fraud_rate,
         "category_mapping": category_mapping if category_mapping is not None else {},
         "gender_mapping": gender_mapping
         if gender_mapping is not None
