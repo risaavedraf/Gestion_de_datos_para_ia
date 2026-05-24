@@ -12,11 +12,12 @@ services:
       - APP_ENV=development
       - LOG_LEVEL=INFO
       - DATA_SAMPLE_SIZE=10000
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-change-me-local-admin-token}
     depends_on:
       db:
         condition: service_healthy
     volumes:
-      - ./data:/app/data
+      - ./Data:/app/Data
       - ./logs:/app/logs
       - ./reports:/app/reports
       - ./models:/app/models

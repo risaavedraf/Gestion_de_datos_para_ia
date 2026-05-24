@@ -31,7 +31,7 @@ async function runPipeline(sampleSize) {
     log('🚀 Starting pipeline...');
 
     try {
-        const result = await api(url, { method: 'POST' });
+        const result = await api(url, { method: 'POST', admin: true });
 
         if (result?.status === 'success') {
             const stages = result.stages;
@@ -116,7 +116,7 @@ async function runStage(stage) {
     log(`🚀 Running ${stage}...`);
 
     try {
-        const result = await api(url, { method: 'POST' });
+        const result = await api(url, { method: 'POST', admin: true });
 
         if (result?.status === 'success' || result?.status === 'available') {
             updateStatus(statusEl, '✅ Complete');
@@ -214,7 +214,7 @@ async function runDemo() {
 
     try {
         const url = `/api/pipeline/run?sample_size=${sampleSize}`;
-        const result = await api(url, { method: 'POST' });
+        const result = await api(url, { method: 'POST', admin: true });
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
         if (result?.status === 'success') {
