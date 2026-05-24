@@ -17,7 +17,7 @@ from pathlib import Path
 # Add backend to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config.settings import (
+from backend.config.settings import (
     BRONZE_DIR,
     SILVER_DIR,
     GOLD_DIR,
@@ -124,7 +124,7 @@ class TestIngestion:
 
     def test_ingest_success(self, sample_size):
         """Ingest 100 rows to Bronze layer."""
-        from src.ingestion import ingest
+        from backend.src.ingestion import ingest
 
         result = ingest(sample_size=sample_size)
 
@@ -153,7 +153,7 @@ class TestIngestion:
 
     def test_get_bronze_stats(self):
         """Stats function should return valid data."""
-        from src.ingestion import get_bronze_stats
+        from backend.src.ingestion import get_bronze_stats
 
         stats = get_bronze_stats()
         assert stats["status"] == "available"
@@ -163,7 +163,7 @@ class TestIngestion:
 
     def test_ingest_file_not_found(self):
         """Ingest should handle missing file gracefully."""
-        from src.ingestion import ingest
+        from backend.src.ingestion import ingest
 
         result = ingest(source_path="/nonexistent/file.csv")
         assert result["status"] == "error"
@@ -175,7 +175,7 @@ class TestCleaning:
 
     def test_clean_success(self, sample_size):
         """Clean Bronze data to Silver layer."""
-        from src.cleaning import clean
+        from backend.src.cleaning import clean
 
         result = clean(sample_size=sample_size)
 
@@ -234,7 +234,7 @@ class TestCleaning:
 
     def test_get_silver_stats(self):
         """Stats function should return valid data."""
-        from src.cleaning import get_silver_stats
+        from backend.src.cleaning import get_silver_stats
 
         stats = get_silver_stats()
         assert stats["status"] == "available"
@@ -243,7 +243,7 @@ class TestCleaning:
 
     def test_clean_missing_bronze(self):
         """Clean should handle missing Bronze data gracefully."""
-        from src.cleaning import clean
+        from backend.src.cleaning import clean
 
         result = clean(input_path="/nonexistent/bronze.parquet")
         assert result["status"] == "error"
@@ -254,7 +254,7 @@ class TestValidation:
 
     def test_validate_success(self, sample_size):
         """Validate Silver data to Gold layer."""
-        from src.validation import validate
+        from backend.src.validation import validate
 
         result = validate(sample_size=sample_size)
 
@@ -310,7 +310,7 @@ class TestValidation:
     def test_gold_has_valid_category(self):
         """Gold records should have valid category."""
         import pandas as pd
-        from config.settings import VALID_CATEGORIES
+        from backend.config.settings import VALID_CATEGORIES
 
         df = pd.read_parquet(GOLD_DIR / "fraud_gold.parquet")
         assert all(df["category"].isin(VALID_CATEGORIES))
@@ -324,7 +324,7 @@ class TestValidation:
 
     def test_get_gold_stats(self):
         """Stats function should return valid data."""
-        from src.validation import get_gold_stats
+        from backend.src.validation import get_gold_stats
 
         stats = get_gold_stats()
         assert stats["status"] == "available"
@@ -334,7 +334,7 @@ class TestValidation:
 
     def test_validate_missing_silver(self):
         """Validate should handle missing Silver data gracefully."""
-        from src.validation import validate
+        from backend.src.validation import validate
 
         result = validate(input_path="/nonexistent/silver.parquet")
         assert result["status"] == "error"
@@ -345,7 +345,7 @@ class TestLoaderImports:
 
     def test_loader_module_imports(self):
         """Loader module should import without errors."""
-        from src.loader import get_engine, create_tables, load
+        from backend.src.loader import get_engine, create_tables, load
 
         assert callable(get_engine)
         assert callable(create_tables)
@@ -353,7 +353,7 @@ class TestLoaderImports:
 
     def test_loader_missing_gold(self):
         """Load should handle missing Gold data gracefully."""
-        from src.loader import load
+        from backend.src.loader import load
 
         # This will fail at DB connection if no DB, but we test the Gold check
         # by temporarily monkey-patching — or just verify the function exists

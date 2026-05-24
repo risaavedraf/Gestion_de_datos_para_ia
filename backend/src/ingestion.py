@@ -1,15 +1,17 @@
-import pandas as pd
 import json
 from datetime import datetime
 from pathlib import Path
-from config.settings import BRONZE_DIR, RAW_CSV, REQUIRED_COLUMNS
-from config.logging_config import setup_logging
-from src.utils import calculate_checksum, generate_run_id
+
+import pandas as pd
+
+from backend.config.logging_config import setup_logging
+from backend.config.settings import BRONZE_DIR, RAW_CSV
+from backend.src.utils import calculate_checksum, generate_run_id
 
 logger = setup_logging("bronze")
 
 
-def ingest(source_path: str = None, sample_size: int = None) -> dict:
+def ingest(source_path: str | None = None, sample_size: int | None = None) -> dict:
     """
     Ingest CSV to Bronze layer.
 
@@ -30,14 +32,13 @@ def ingest(source_path: str = None, sample_size: int = None) -> dict:
         logger.error(f"Source file not found: {source}")
         return {"run_id": run_id, "status": "error", "error": "File not found"}
 
-    # Read CSV
+    # Read CSV (use nrows for sample mode to avoid full-file load)
     logger.info(f"Reading CSV from {source}")
-    df = pd.read_csv(source)
-
-    # Apply sample if specified
-    if sample_size and sample_size < len(df):
-        df = df.head(sample_size)
-        logger.info(f"Sampled to {sample_size} rows")
+    if sample_size and sample_size > 0:
+        df = pd.read_csv(source, nrows=int(sample_size))
+        logger.info(f"Sample mode enabled: loaded up to {sample_size} rows")
+    else:
+        df = pd.read_csv(source)
 
     # Calculate checksum of original file
     checksum = calculate_checksum(str(source))

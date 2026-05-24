@@ -6,18 +6,14 @@ and utility functions (haversine, age calculation, risk levels).
 
 import pytest
 import pandas as pd
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from src.cleaning import clean
-from src.utils import (
-    haversine,
+from backend.src.cleaning import clean
+from backend.src.utils import (
     calculate_age_at_transaction,
-    mask_pii,
-    mask_cc_num,
     get_risk_level,
+    haversine,
+    mask_cc_num,
+    mask_pii,
 )
 
 
@@ -69,7 +65,7 @@ def test_risk_levels():
     assert get_risk_level(0.5) == "medium"
     assert get_risk_level(0.8) == "high"
     assert get_risk_level(0.3) == "medium"  # boundary: 0.3 is medium (not < 0.3)
-    assert get_risk_level(0.7) == "high"    # boundary: 0.7 is high (not < 0.7)
+    assert get_risk_level(0.7) == "high"  # boundary: 0.7 is high (not < 0.7)
 
 
 # ─── Cleaning function tests ──────────────────────────────────────
@@ -78,31 +74,37 @@ def test_risk_levels():
 @pytest.fixture
 def bronze_data(tmp_path):
     """Create sample Bronze-format data for cleaning tests."""
-    df = pd.DataFrame({
-        "Unnamed: 0": [0, 1, 2],
-        "trans_date_trans_time": ["2020-06-21 12:14:25", "2020-06-21 12:15:00", "2020-06-21 12:16:00"],
-        "cc_num": [1234567890, 2345678901, 3456789012],
-        "merchant": ["Shop A", "Shop B", "Shop C"],
-        "category": ["SHOPPING_POS", "grocery_pos", "GAS_TRANSPORT"],
-        "amt": [100.0, 50.0, 25.0],
-        "first": ["John", "Jane", "Bob"],
-        "last": ["Doe", "Smith", "Jones"],
-        "gender": ["m", "F", "M"],
-        "street": ["123 Main St", "456 Oak Ave", "789 Pine Rd"],
-        "city": ["New York", "Boston", "Chicago"],
-        "state": ["ny", "MA", "il"],
-        "zip": ["10001", "02101", "60601"],
-        "lat": [40.7128, 42.3601, 41.8781],
-        "long": [-74.0060, -71.0589, -87.6298],
-        "city_pop": [8000000, 700000, 2700000],
-        "job": ["Engineer", "Teacher", "Doctor"],
-        "dob": ["1990-01-01", "1995-05-15", "1985-12-30"],
-        "trans_num": ["t001", "t002", "t003"],
-        "unix_time": [1592745265, 1592745300, 1592745360],
-        "merch_lat": [40.7200, 42.3700, 41.8800],
-        "merch_long": [-74.0100, -71.0600, -87.6300],
-        "is_fraud": [0, 1, 0]
-    })
+    df = pd.DataFrame(
+        {
+            "Unnamed: 0": [0, 1, 2],
+            "trans_date_trans_time": [
+                "2020-06-21 12:14:25",
+                "2020-06-21 12:15:00",
+                "2020-06-21 12:16:00",
+            ],
+            "cc_num": [1234567890, 2345678901, 3456789012],
+            "merchant": ["Shop A", "Shop B", "Shop C"],
+            "category": ["SHOPPING_POS", "grocery_pos", "GAS_TRANSPORT"],
+            "amt": [100.0, 50.0, 25.0],
+            "first": ["John", "Jane", "Bob"],
+            "last": ["Doe", "Smith", "Jones"],
+            "gender": ["m", "F", "M"],
+            "street": ["123 Main St", "456 Oak Ave", "789 Pine Rd"],
+            "city": ["New York", "Boston", "Chicago"],
+            "state": ["ny", "MA", "il"],
+            "zip": ["10001", "02101", "60601"],
+            "lat": [40.7128, 42.3601, 41.8781],
+            "long": [-74.0060, -71.0589, -87.6298],
+            "city_pop": [8000000, 700000, 2700000],
+            "job": ["Engineer", "Teacher", "Doctor"],
+            "dob": ["1990-01-01", "1995-05-15", "1985-12-30"],
+            "trans_num": ["t001", "t002", "t003"],
+            "unix_time": [1592745265, 1592745300, 1592745360],
+            "merch_lat": [40.7200, 42.3700, 41.8800],
+            "merch_long": [-74.0100, -71.0600, -87.6300],
+            "is_fraud": [0, 1, 0],
+        }
+    )
 
     bronze_path = tmp_path / "fraud_bronze.parquet"
     df.to_parquet(bronze_path, index=False)
@@ -111,7 +113,8 @@ def bronze_data(tmp_path):
 
 def _run_clean(bronze_data, tmp_path):
     """Helper: run clean with patched paths, return (result, silver_df)."""
-    import src.cleaning as clean_module
+    import backend.src.cleaning as clean_module
+
     original_bronze = clean_module.BRONZE_DIR
     original_silver = clean_module.SILVER_DIR
 

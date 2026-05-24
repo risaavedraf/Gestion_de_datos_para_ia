@@ -2,32 +2,55 @@
 Feature Engineering for ML Pipeline
 Builds feature matrix from Gold layer data
 """
-import pandas as pd
+
+from pathlib import Path
+
 import numpy as np
-from sklearn.model_selection import train_test_split
-from config.settings import GOLD_DIR
-from config.logging_config import setup_logging
+import pandas as pd
+
+from backend.config.logging_config import setup_logging
+from backend.config.settings import GOLD_DIR
 
 logger = setup_logging("features")
 
 # Feature columns used by the model
-NUMERIC_FEATURES = ["amt", "trans_hour", "trans_day_of_week", "trans_month", "distance_km", "city_pop", "age_at_transaction"]
+NUMERIC_FEATURES = [
+    "amt",
+    "trans_hour",
+    "trans_day_of_week",
+    "trans_month",
+    "distance_km",
+    "city_pop",
+    "age_at_transaction",
+]
 CATEGORICAL_FEATURES = ["category", "gender"]
 TARGET = "is_fraud"
 
-def build_features(input_path: str = None, test_size: float = 0.2, random_state: int = 42):
+
+def _split_chronological(
+    df: pd.DataFrame, test_size: float
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split dataset by time order to avoid future-leakage."""
+    split_idx = int(len(df) * (1 - test_size))
+    split_idx = max(1, min(split_idx, len(df) - 1))
+    train_df = df.iloc[:split_idx].copy()
+    test_df = df.iloc[split_idx:].copy()
+    return train_df, test_df
+
+
+def build_features(
+    input_path: str | None = None,
+    test_size: float = 0.2,
+    random_state: int = 42,  # kept for API compatibility
+):
     """
     Build feature matrix from Gold layer data.
 
-    Args:
-        input_path: Path to Gold parquet. Defaults to GOLD_DIR/fraud_gold.parquet
-        test_size: Proportion for test split
-        random_state: Random seed for reproducibility
-
     Returns:
-        dict with X_train, X_test, y_train, y_test, feature_names, class_distribution
+        dict with X_train, X_test, y_train, y_test, feature_names, class_distribution,
+        category_mapping, and gender_mapping
     """
-    from pathlib import Path
+    del random_state  # Not used in chronological split; kept for compatibility.
 
     source = Path(input_path) if input_path else GOLD_DIR / "fraud_gold.parquet"
     if not source.exists():
@@ -37,48 +60,97 @@ def build_features(input_path: str = None, test_size: float = 0.2, random_state:
     df = pd.read_parquet(source)
     logger.info(f"Loaded {len(df)} rows from Gold")
 
-    # Check required columns exist
-    missing = [c for c in NUMERIC_FEATURES + CATEGORICAL_FEATURES + [TARGET] if c not in df.columns]
+    required = (
+        NUMERIC_FEATURES + CATEGORICAL_FEATURES + [TARGET, "trans_date_trans_time"]
+    )
+    missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"Missing columns: {missing}")
 
-    # Handle missing values
-    for col in NUMERIC_FEATURES:
-        if df[col].isnull().any():
-            median_val = df[col].median()
-            df[col] = df[col].fillna(median_val)
-            logger.warning(f"Filled {col} nulls with median: {median_val}")
-
-    for col in CATEGORICAL_FEATURES:
-        if df[col].isnull().any():
-            mode_val = df[col].mode()[0]
-            df[col] = df[col].fillna(mode_val)
-            logger.warning(f"Filled {col} nulls with mode: {mode_val}")
-
-    # Encode categorical features
-    df_encoded = df.copy()
-
-    # Category: label encoding
-    category_mapping = {cat: idx for idx, cat in enumerate(df["category"].unique())}
-    df_encoded["category_encoded"] = df_encoded["category"].map(category_mapping)
-
-    # Gender: binary encoding (M=0, F=1)
-    df_encoded["gender_encoded"] = (df_encoded["gender"] == "F").astype(int)
-
-    # Build feature list
-    feature_names = NUMERIC_FEATURES + ["category_encoded", "gender_encoded"]
-
-    X = df_encoded[feature_names].values
-    y = df_encoded[TARGET].values
-
-    # Stratified split
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=random_state, stratify=y
+    df = df.copy()
+    df["trans_date_trans_time"] = pd.to_datetime(
+        df["trans_date_trans_time"], errors="coerce"
+    )
+    df = (
+        df.dropna(subset=["trans_date_trans_time"])
+        .sort_values("trans_date_trans_time")
+        .reset_index(drop=True)
     )
 
-    # Class distribution
+    if len(df) < 2:
+        raise ValueError(
+            "Not enough valid rows to create chronological train/test split"
+        )
+
+    train_df, test_df = _split_chronological(df, test_size=test_size)
+
+    # Fit imputers on train only
+    for col in NUMERIC_FEATURES:
+        train_df[col] = pd.to_numeric(train_df[col], errors="coerce")
+        test_df[col] = pd.to_numeric(test_df[col], errors="coerce")
+
+        median_val = train_df[col].median()
+        train_df[col] = train_df[col].fillna(median_val)
+        test_df[col] = test_df[col].fillna(median_val)
+
+    for col in CATEGORICAL_FEATURES:
+        train_df[col] = train_df[col].astype(str).str.strip()
+        test_df[col] = test_df[col].astype(str).str.strip()
+
+        mode_val = (
+            train_df[col].mode().iloc[0] if not train_df[col].mode().empty else ""
+        )
+        train_df[col] = train_df[col].replace({"": mode_val}).fillna(mode_val)
+        test_df[col] = test_df[col].replace({"": mode_val}).fillna(mode_val)
+
+    train_df["category"] = train_df["category"].str.lower()
+    test_df["category"] = test_df["category"].str.lower()
+    train_df["gender"] = train_df["gender"].str.upper()
+    test_df["gender"] = test_df["gender"].str.upper()
+
+    # Fit encoders on train only
+    category_mapping = {
+        cat: idx for idx, cat in enumerate(sorted(train_df["category"].unique()))
+    }
+    gender_mapping = {"M": 0, "F": 1}
+
+    train_df["category_encoded"] = (
+        train_df["category"]
+        .apply(lambda value: category_mapping.get(str(value), -1))
+        .astype(int)
+    )
+    test_df["category_encoded"] = (
+        test_df["category"]
+        .apply(lambda value: category_mapping.get(str(value), -1))
+        .astype(int)
+    )
+    train_df["gender_encoded"] = (
+        train_df["gender"]
+        .apply(lambda value: gender_mapping.get(str(value), -1))
+        .astype(int)
+    )
+    test_df["gender_encoded"] = (
+        test_df["gender"]
+        .apply(lambda value: gender_mapping.get(str(value), -1))
+        .astype(int)
+    )
+
+    feature_names = NUMERIC_FEATURES + ["category_encoded", "gender_encoded"]
+
+    X_train = train_df[feature_names].to_numpy()
+    X_test = test_df[feature_names].to_numpy()
+    y_train = (
+        pd.to_numeric(train_df[TARGET], errors="coerce")
+        .fillna(0)
+        .astype(int)
+        .to_numpy()
+    )
+    y_test = (
+        pd.to_numeric(test_df[TARGET], errors="coerce").fillna(0).astype(int).to_numpy()
+    )
+
     unique, counts = np.unique(y_train, return_counts=True)
-    class_dist = dict(zip(unique.astype(int), counts.astype(int)))
+    class_dist = dict(zip(unique.astype(int), counts.astype(int), strict=False))
 
     result = {
         "X_train": X_train,
@@ -90,10 +162,15 @@ def build_features(input_path: str = None, test_size: float = 0.2, random_state:
         "n_train": len(X_train),
         "n_test": len(X_test),
         "class_distribution": class_dist,
-        "category_mapping": category_mapping
+        "category_mapping": category_mapping,
+        "gender_mapping": gender_mapping,
     }
 
-    logger.info(f"Features built: {len(feature_names)} features, {len(X_train)} train, {len(X_test)} test")
-    logger.info(f"Class distribution (train): {class_dist}")
+    logger.info(
+        "Features built: %s features, %s train, %s test (chronological split)",
+        len(feature_names),
+        len(X_train),
+        len(X_test),
+    )
 
     return result

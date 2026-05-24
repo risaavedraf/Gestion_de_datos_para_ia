@@ -23,7 +23,7 @@ sys.path.insert(0, str(_project_root / "backend"))
 # Reduce log noise from third-party libs
 os.environ.setdefault("LOG_LEVEL", "WARNING")
 
-from config.settings import (
+from backend.config.settings import (
     BRONZE_DIR,
     RAW_CSV,
     VALID_CATEGORIES,
@@ -143,9 +143,9 @@ def seed_data() -> None:
         print(f"[seed] Wrote {len(rows)} rows to {RAW_CSV}")
 
     # --- Run pipeline stages ---
-    from src.ingestion import ingest
-    from src.cleaning import clean
-    from src.validation import validate
+    from backend.src.ingestion import ingest
+    from backend.src.cleaning import clean
+    from backend.src.validation import validate
 
     print("[seed] Running bronze (ingest)...")
     result = ingest(sample_size=SAMPLE_SIZE)
