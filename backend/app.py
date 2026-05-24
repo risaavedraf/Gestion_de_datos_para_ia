@@ -205,11 +205,17 @@ async def pipeline_status():
     try:
         from backend.src.db import get_engine
         from sqlalchemy import text
+
         engine = get_engine()
         with engine.connect() as conn:
             sql_counts = {}
-            for table in ["customers", "merchants", "transactions", "pipeline_logs",
-                          "pipeline_load_state"]:
+            for table in [
+                "customers",
+                "merchants",
+                "transactions",
+                "pipeline_logs",
+                "pipeline_load_state",
+            ]:
                 row = conn.execute(
                     text(f"SELECT COUNT(*) AS cnt FROM {table}")
                 ).fetchone()

@@ -3,7 +3,6 @@
  * Fraud Detection Pipeline Dashboard
  */
 
-
 // ==================== LOAD MODEL METRICS ====================
 
 async function loadModelMetrics() {

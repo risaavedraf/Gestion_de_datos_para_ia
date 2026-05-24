@@ -3,7 +3,6 @@
  * Fraud Detection Pipeline Dashboard
  */
 
-
 // ==================== TAB NAVIGATION ====================
 
 document.querySelectorAll(".tab-btn").forEach((btn) => {
@@ -151,94 +150,91 @@ async function loadOverview() {
 const DATASET_SOURCE_KEY = "fraud-dashboard-dataset-source";
 
 function getDatasetSource() {
-    return window.localStorage.getItem(DATASET_SOURCE_KEY) || "parquet";
+	return window.localStorage.getItem(DATASET_SOURCE_KEY) || "parquet";
 }
 
 function setDatasetSource(source) {
-    window.localStorage.setItem(DATASET_SOURCE_KEY, source);
+	window.localStorage.setItem(DATASET_SOURCE_KEY, source);
 }
 
 function toggleDatasetSource() {
-    const current = getDatasetSource();
-    const next = current === "parquet" ? "sql" : "parquet";
-    setDatasetSource(next);
-    updateSourceToggleUI();
-    loadDataset();
+	const current = getDatasetSource();
+	const next = current === "parquet" ? "sql" : "parquet";
+	setDatasetSource(next);
+	updateSourceToggleUI();
+	loadDataset();
 }
 
 function updateSourceToggleUI() {
-    const source = getDatasetSource();
-    const btn = document.getElementById("dataset-source-toggle");
-    if (btn) {
-        btn.textContent = source === "parquet"
-            ? "🗄️ Cambiar a SQL"
-            : "📁 Cambiar a Parquet";
-        btn.className = "btn btn-secondary toggle-btn toggle-" + source;
-    }
-    const badge = document.getElementById("dataset-source-badge");
-    if (badge) {
-        badge.textContent = source === "parquet" ? "📁 Parquet" : "🗄️ PostgreSQL";
-    }
+	const source = getDatasetSource();
+	const btn = document.getElementById("dataset-source-toggle");
+	if (btn) {
+		btn.textContent =
+			source === "parquet" ? "🗄️ Cambiar a SQL" : "📁 Cambiar a Parquet";
+		btn.className = "btn btn-secondary toggle-btn toggle-" + source;
+	}
+	const badge = document.getElementById("dataset-source-badge");
+	if (badge) {
+		badge.textContent = source === "parquet" ? "📁 Parquet" : "🗄️ PostgreSQL";
+	}
 }
 
 async function loadDatasetFromSQL() {
-    const [transactions, stats, _kpis] = await Promise.all([
-        api("/api/sql/transactions?limit=10&offset=0"),
-        api("/api/sql/stats"),
-        api("/api/sql/kpis"),
-    ]);
+	const [transactions, stats, _kpis] = await Promise.all([
+		api("/api/sql/transactions?limit=10&offset=0"),
+		api("/api/sql/stats"),
+		api("/api/sql/kpis"),
+	]);
 
-    if (stats) {
-        updateDatasetStats({
-            rows: stats.total_transactions || 0,
-            cols: "—",
-            fraud_count: stats.fraud_count || 0,
-            amt_mean: stats.avg_amt
-                ? "$" + stats.avg_amt.toLocaleString()
-                : "—",
-        });
-    }
+	if (stats) {
+		updateDatasetStats({
+			rows: stats.total_transactions || 0,
+			cols: "—",
+			fraud_count: stats.fraud_count || 0,
+			amt_mean: stats.avg_amt ? "$" + stats.avg_amt.toLocaleString() : "—",
+		});
+	}
 
-    if (transactions && transactions.transactions) {
-        updateSampleTable(transactions.transactions);
-    }
+	if (transactions && transactions.transactions) {
+		updateSampleTable(transactions.transactions);
+	}
 
-    // Charts not available from SQL — show placeholder message
-    const fraudChart = document.getElementById("fraud-chart");
-    const categoryChart = document.getElementById("category-chart");
-    if (fraudChart) {
-        const ctx = fraudChart.getContext("2d");
-        ctx.clearRect(0, 0, fraudChart.width, fraudChart.height);
-        ctx.font = "14px sans-serif";
-        ctx.fillStyle = "#888";
-        ctx.textAlign = "center";
-        ctx.fillText(
-            "Charts only available in Parquet mode",
-            fraudChart.width / 2,
-            fraudChart.height / 2,
-        );
-    }
-    if (categoryChart) {
-        const ctx = categoryChart.getContext("2d");
-        ctx.clearRect(0, 0, categoryChart.width, categoryChart.height);
-        ctx.font = "14px sans-serif";
-        ctx.fillStyle = "#888";
-        ctx.textAlign = "center";
-        ctx.fillText(
-            "Charts only available in Parquet mode",
-            categoryChart.width / 2,
-            categoryChart.height / 2,
-        );
-    }
+	// Charts not available from SQL — show placeholder message
+	const fraudChart = document.getElementById("fraud-chart");
+	const categoryChart = document.getElementById("category-chart");
+	if (fraudChart) {
+		const ctx = fraudChart.getContext("2d");
+		ctx.clearRect(0, 0, fraudChart.width, fraudChart.height);
+		ctx.font = "14px sans-serif";
+		ctx.fillStyle = "#888";
+		ctx.textAlign = "center";
+		ctx.fillText(
+			"Charts only available in Parquet mode",
+			fraudChart.width / 2,
+			fraudChart.height / 2,
+		);
+	}
+	if (categoryChart) {
+		const ctx = categoryChart.getContext("2d");
+		ctx.clearRect(0, 0, categoryChart.width, categoryChart.height);
+		ctx.font = "14px sans-serif";
+		ctx.fillStyle = "#888";
+		ctx.textAlign = "center";
+		ctx.fillText(
+			"Charts only available in Parquet mode",
+			categoryChart.width / 2,
+			categoryChart.height / 2,
+		);
+	}
 }
 
 async function loadDataset() {
-    const source = getDatasetSource();
-    updateSourceToggleUI();
+	const source = getDatasetSource();
+	updateSourceToggleUI();
 
-    if (source === "sql") {
-        return loadDatasetFromSQL();
-    }
+	if (source === "sql") {
+		return loadDatasetFromSQL();
+	}
 
 	const [stats, sample, fraudDist, catDist] = await Promise.all([
 		api("/api/dataset/stats"),
