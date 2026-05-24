@@ -171,19 +171,19 @@ def prepare_transaction_for_prediction(transaction: dict):
     if gender_value not in gender_mapping:
         raise ValueError(f"Unknown gender: '{gender_value}'")
 
-    amt = float(transaction.get("amt", 0))
-    city_pop = int(transaction.get("city_pop", 0))
-    distance_km = float(transaction.get("distance_km", 0))
-    trans_hour = int(transaction.get("trans_hour", 12))
+    amt = float(transaction.get("amt") or 0)
+    city_pop = int(transaction.get("city_pop") or 0)
+    distance_km = float(transaction.get("distance_km") or 0)
+    trans_hour = int(transaction.get("trans_hour") or 12)
 
     features = {
         "amt": amt,
         "trans_hour": trans_hour,
-        "trans_day_of_week": int(transaction.get("trans_day_of_week", 0)),
-        "trans_month": int(transaction.get("trans_month", 1)),
+        "trans_day_of_week": int(transaction.get("trans_day_of_week") or 0),
+        "trans_month": int(transaction.get("trans_month") or 1),
         "distance_km": distance_km,
         "city_pop": city_pop,
-        "age_at_transaction": int(transaction.get("age_at_transaction", 30)),
+        "age_at_transaction": int(transaction.get("age_at_transaction") or 30),
         # Interaction features
         "amt_per_city_pop": amt / (city_pop + 1),
         "distance_x_amt": distance_km * amt,
