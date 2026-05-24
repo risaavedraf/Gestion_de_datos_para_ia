@@ -195,11 +195,32 @@ async def pipeline_status():
     from backend.src.ingestion import get_bronze_stats
     from backend.src.validation import get_gold_stats
 
-    return {
+    result = {
         "bronze": get_bronze_stats(),
         "silver": get_silver_stats(),
         "gold": get_gold_stats(),
     }
+
+    # Try SQL row counts (graceful when DB unavailable)
+    try:
+        from backend.src.db import get_engine
+        from sqlalchemy import text
+        engine = get_engine()
+        with engine.connect() as conn:
+            sql_counts = {}
+            for table in ["customers", "merchants", "transactions", "pipeline_logs",
+                          "pipeline_load_state"]:
+                row = conn.execute(
+                    text(f"SELECT COUNT(*) AS cnt FROM {table}")
+                ).fetchone()
+                sql_counts[table] = int(row.cnt) if row else 0
+            result["sql_counts"] = sql_counts
+            logger.info("SQL counts: %s", sql_counts)
+    except Exception as exc:
+        logger.debug("SQL counts unavailable: %s", exc)
+        result["sql_counts"] = None
+
+    return result
 
 
 @app.get("/api/pipeline/logs")

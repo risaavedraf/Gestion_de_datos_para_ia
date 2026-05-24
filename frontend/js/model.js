@@ -2,7 +2,7 @@
  * Model metrics, prediction, and retraining UI
  * Fraud Detection Pipeline Dashboard
  */
-"use strict";
+
 
 // ==================== LOAD MODEL METRICS ====================
 
@@ -314,21 +314,28 @@ async function runDemoPrediction() {
 
 		if (explanationEl) {
 			const reasons = [];
-			if (parseFloat(amt) > 500)
-				reasons.push(
-					"monto elevado ($" + parseFloat(amt).toLocaleString() + ")",
-				);
-			if (parseInt(hour) >= 22 || parseInt(hour) <= 5)
-				reasons.push("horario nocturno (" + hour + "hrs)");
-			if (parseFloat(distance) > 100)
-				reasons.push("distancia inusual (" + distance + "km)");
-			if (parseFloat(distance) > 500)
-				reasons.push("distancia muy alta (" + distance + "km)");
-			if (["shopping_pos", "shopping_net"].includes(category))
-				reasons.push("categoría de compras");
-			if (parseFloat(amt) > 2000) reasons.push("monto muy alto");
-			if (reasons.length === 0)
-				reasons.push("patrones normales de transacción");
+			try {
+				const metrics = await api("/api/model/metrics");
+				if (metrics?.feature_importance?.length) {
+					const top = metrics.feature_importance.slice(0, 3);
+					reasons.push(
+						...top.map(
+							(f) =>
+								f.name + " (peso: " + (f.importance * 100).toFixed(1) + "%)",
+						),
+					);
+				}
+			} catch (_) {
+				/* fallback to heuristics */
+			}
+
+			if (reasons.length === 0) {
+				if (parseFloat(amt) > 500) reasons.push("monto elevado");
+				if (parseInt(hour) >= 22 || parseInt(hour) <= 5)
+					reasons.push("horario nocturno");
+				if (parseFloat(distance) > 100) reasons.push("distancia inusual");
+				if (reasons.length === 0) reasons.push("características normales");
+			}
 
 			explanationEl.innerHTML = `
                 <div class="explanation-card">

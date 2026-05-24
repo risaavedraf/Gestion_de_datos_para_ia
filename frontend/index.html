@@ -106,6 +106,17 @@
       <section id="dataset" class="tab-content">
         <h2>📊 Explorador de Dataset</h2>
 
+        <div class="dataset-controls">
+          <span id="dataset-source-badge" class="source-badge">📁 Parquet</span>
+          <button
+            id="dataset-source-toggle"
+            class="btn btn-secondary toggle-btn toggle-parquet"
+            onclick="toggleDatasetSource()"
+          >
+            🗄️ Cambiar a SQL
+          </button>
+        </div>
+
         <div class="stats-grid">
           <div class="stat-card">
             <div class="stat-label">Total Filas</div>
@@ -361,6 +372,7 @@
             <div class="stage-body">
               <p>Insertar en PostgreSQL</p>
               <div id="load-info" class="stage-info">No data</div>
+              <div id="sql-counts-info" class="sql-counts-section"></div>
               <button class="btn btn-sm" onclick="runStage('load')">
                 Ejecutar Load
               </button>

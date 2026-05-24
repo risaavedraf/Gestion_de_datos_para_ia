@@ -2,7 +2,7 @@
  * Pipeline stage management — Run pipeline, update status, log output
  * Fraud Detection Pipeline Dashboard
  */
-'use strict';
+
 
 // ==================== RUN FULL PIPELINE ====================
 
@@ -178,6 +178,34 @@ async function loadPipelineStatus() {
     updateLayerCard('bronze', status.bronze);
     updateLayerCard('silver', status.silver);
     updateLayerCard('gold', status.gold);
+    updateSqlCounts(status.sql_counts);
+}
+
+function updateSqlCounts(sqlCounts) {
+    const el = document.getElementById('sql-counts-info');
+    if (!el) return;
+
+    if (!sqlCounts) {
+        el.innerHTML = '<div class="stat sql-unavailable">🗄️ SQL no disponible</div>';
+        return;
+    }
+
+    el.innerHTML = `
+        <div class="sql-counts-grid">
+            ${[
+                ['customers', 'Clientes'],
+                ['merchants', 'Comercios'],
+                ['transactions', 'Transacciones'],
+                ['pipeline_logs', 'Logs'],
+                ['pipeline_load_state', 'Estado Carga']
+            ].map(([key, label]) => `
+                <div class="sql-count-item">
+                    <span class="sql-count">${(sqlCounts[key] || 0).toLocaleString()}</span>
+                    <span class="sql-label">${label}</span>
+                </div>
+            `).join('')}
+        </div>
+    `;
 }
 
 function updateLayerCard(layer, data) {
