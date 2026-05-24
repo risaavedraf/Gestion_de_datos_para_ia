@@ -885,6 +885,7 @@ async def train_model_endpoint(_: None = Depends(require_admin_token)):
         metadata_path = MODELS_DIR / "model_metadata.json"
         if metadata_path.exists():
             import json
+
             with open(metadata_path) as f:
                 metadata = json.load(f)
             metadata["decision_threshold"] = eval_result["tuned_threshold"]

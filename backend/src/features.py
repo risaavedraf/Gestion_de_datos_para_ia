@@ -159,16 +159,18 @@ def build_features(
     global_fraud_rate = float(train_df[TARGET].mean())
     for df_split in (train_df, test_df):
         df_split["category_fraud_rate"] = (
-            df_split["category"]
-            .map(category_fraud_rate_map)
-            .fillna(global_fraud_rate)
+            df_split["category"].map(category_fraud_rate_map).fillna(global_fraud_rate)
         )
 
-    feature_names = NUMERIC_FEATURES + INTERACTION_FEATURES + [
-        "category_fraud_rate",
-        "category_encoded",
-        "gender_encoded",
-    ]
+    feature_names = (
+        NUMERIC_FEATURES
+        + INTERACTION_FEATURES
+        + [
+            "category_fraud_rate",
+            "category_encoded",
+            "gender_encoded",
+        ]
+    )
 
     X_train = train_df[feature_names].to_numpy()
     X_test = test_df[feature_names].to_numpy()

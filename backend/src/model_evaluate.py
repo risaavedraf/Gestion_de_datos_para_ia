@@ -52,8 +52,10 @@ def evaluate_model(
     # Tune threshold via precision-recall (F1-maximizing)
     pr_precision, pr_recall, pr_thresholds_all = precision_recall_curve(y_test, y_prob)
     if len(pr_thresholds_all) > 0:
-        f1_scores = 2 * (pr_precision[:-1] * pr_recall[:-1]) / (
-            pr_precision[:-1] + pr_recall[:-1] + 1e-10
+        f1_scores = (
+            2
+            * (pr_precision[:-1] * pr_recall[:-1])
+            / (pr_precision[:-1] + pr_recall[:-1] + 1e-10)
         )
         best_idx = int(np.argmax(f1_scores))
         tuned_threshold = float(pr_thresholds_all[best_idx])
