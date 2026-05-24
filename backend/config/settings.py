@@ -29,6 +29,11 @@ DATA_SAMPLE_SIZE = int(os.getenv("DATA_SAMPLE_SIZE", "10000"))
 ADMIN_API_TOKEN = os.getenv("ADMIN_API_TOKEN", "")
 MODEL_DECISION_THRESHOLD = float(os.getenv("MODEL_DECISION_THRESHOLD", "0.3"))
 
+# --- PR-1: Seed gate, DB pool ---
+ALLOW_SYNTHETIC_SEED_DEFAULT = os.getenv("ALLOW_SYNTHETIC_SEED", "")
+DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "5"))
+DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "10"))
+
 # Pipeline
 REQUIRED_COLUMNS = [
     "trans_date_trans_time",

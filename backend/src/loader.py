@@ -4,17 +4,11 @@ from datetime import datetime
 import pandas as pd
 
 from backend.config.logging_config import setup_logging
-from backend.config.settings import DATABASE_URL, GOLD_DIR, REJECTED_DIR
+from backend.config.settings import GOLD_DIR, REJECTED_DIR
+from backend.src.db import get_engine
 from backend.src.utils import generate_run_id
 
 logger = setup_logging("loader")
-
-
-def get_engine():
-    """Create SQLAlchemy engine"""
-    from sqlalchemy import create_engine
-
-    return create_engine(DATABASE_URL)
 
 
 def create_tables(engine=None):
@@ -108,6 +102,14 @@ def create_tables(engine=None):
         training_duration_seconds DECIMAL(10,2),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS pipeline_load_state (
+        id SERIAL PRIMARY KEY,
+        source_table VARCHAR(64) NOT NULL UNIQUE,
+        last_loaded_timestamp BIGINT,
+        rows_loaded INTEGER,
+        loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
     """
 
     with engine.connect() as conn:
@@ -120,15 +122,21 @@ def create_tables(engine=None):
     logger.info("Database tables created/verified")
 
 
-def load(sample_size: int | None = None) -> dict:
+def load(
+    sample_size: int | None = None,
+    incremental: bool = False,
+) -> dict:
     """
     Load Gold data into PostgreSQL with deduplication.
 
     Args:
         sample_size: If set, only load first N rows.
+        incremental: If True, only load rows newer than the latest
+            timestamp already present in the database. Idempotent.
 
     Returns:
-        dict with run_id, customers, merchants, transactions, rejected, status, duration
+        dict with run_id, customers, merchants, transactions, rejected,
+        rows_inserted, last_loaded_timestamp, status, duration
     """
     run_id = generate_run_id()
     start_time = datetime.now()
@@ -145,6 +153,44 @@ def load(sample_size: int | None = None) -> dict:
     df = pd.read_parquet(gold_path)
     if sample_size and sample_size < len(df):
         df = df.head(sample_size)
+
+    # --- Incremental load: compute cutoff timestamp ---
+    if incremental and "unix_time" in df.columns:
+        from sqlalchemy import text
+
+        with engine.connect() as conn:
+            max_in_db = conn.execute(
+                text("SELECT MAX(unix_time) FROM transactions")
+            ).scalar()
+            max_in_state = conn.execute(
+                text(
+                    "SELECT last_loaded_timestamp FROM pipeline_load_state "
+                    "WHERE source_table = 'transactions'"
+                )
+            ).scalar()
+
+        cutoff = max(max_in_db or 0, max_in_state or 0)
+        if cutoff > 0:
+            before = len(df)
+            df = df[df["unix_time"] > cutoff]
+            logger.info(
+                "Incremental load: cutoff=%s, new rows=%s (filtered from %s)",
+                cutoff,
+                len(df),
+                before,
+            )
+        else:
+            logger.info("Incremental load: cutoff=0, loading all %s rows", len(df))
+
+    if len(df) == 0:
+        return {
+            "run_id": run_id,
+            "status": "success",
+            "rows_inserted": 0,
+            "message": "No new data to load",
+            "duration_seconds": round((datetime.now() - start_time).total_seconds(), 2),
+            "timestamp": datetime.now().isoformat(),
+        }
 
     logger.info(f"Loading {len(df)} records to PostgreSQL")
 
@@ -172,7 +218,14 @@ def load(sample_size: int | None = None) -> dict:
                 text("""
                 INSERT INTO customers (customer_id, gender, city, state, zip, city_pop, job, age_at_transaction)
                 VALUES (:customer_id, :gender, :city, :state, :zip, :city_pop, :job, :age_at_transaction)
-                ON CONFLICT (customer_id) DO NOTHING
+                ON CONFLICT (customer_id) DO UPDATE SET
+                    gender = EXCLUDED.gender,
+                    city = EXCLUDED.city,
+                    state = EXCLUDED.state,
+                    zip = EXCLUDED.zip,
+                    city_pop = EXCLUDED.city_pop,
+                    job = EXCLUDED.job,
+                    age_at_transaction = EXCLUDED.age_at_transaction
                 """),
                 customer_records,
             )
@@ -326,6 +379,33 @@ def load(sample_size: int | None = None) -> dict:
 
     duration = (datetime.now() - start_time).total_seconds()
 
+    rows_inserted = len(trans_df)
+    last_ts = None
+    if "unix_time" in df.columns and len(df) > 0:
+        last_ts = int(df["unix_time"].max())
+
+    # 6. Write pipeline_load_state for incremental tracking
+    if last_ts is not None:
+        with engine.connect() as conn:
+            conn.execute(
+                text("""
+                INSERT INTO pipeline_load_state (source_table, last_loaded_timestamp, rows_loaded, loaded_at)
+                VALUES ('transactions', :ts, :rows, CURRENT_TIMESTAMP)
+                ON CONFLICT (source_table) DO UPDATE SET
+                    last_loaded_timestamp = EXCLUDED.last_loaded_timestamp,
+                    rows_loaded = EXCLUDED.rows_loaded,
+                    loaded_at = EXCLUDED.loaded_at
+                """),
+                {"ts": last_ts, "rows": rows_inserted},
+            )
+            conn.commit()
+
+        logger.info(
+            "Load state written: source_table=transactions, last_ts=%s, rows=%s",
+            last_ts,
+            rows_inserted,
+        )
+
     result = {
         "run_id": run_id,
         "status": "success",
@@ -333,6 +413,8 @@ def load(sample_size: int | None = None) -> dict:
         "merchants_inserted": len(merchants_df),
         "transactions_attempted": len(trans_df),
         "rejected_inserted": rejected_count,
+        "rows_inserted": rows_inserted,
+        "last_loaded_timestamp": last_ts,
         "duration_seconds": round(duration, 2),
         "timestamp": datetime.now().isoformat(),
     }

@@ -28,9 +28,14 @@ def ingest(source_path: str | None = None, sample_size: int | None = None) -> di
     source = Path(source_path) if source_path else RAW_CSV
 
     # Verify file exists
-    if not source.exists():
-        logger.error(f"Source file not found: {source}")
-        return {"run_id": run_id, "status": "error", "error": "File not found"}
+    resolved = source.resolve()
+    if not resolved.exists():
+        logger.error(f"Source file not found: {resolved}")
+        return {
+            "run_id": run_id,
+            "status": "error",
+            "error": f"Raw CSV not found at {resolved}",
+        }
 
     # Read CSV (use nrows for sample mode to avoid full-file load)
     logger.info(f"Reading CSV from {source}")
