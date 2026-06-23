@@ -1,6 +1,6 @@
 -- Pipeline DataOps - Credit Card Fraud Detection
 -- Database Schema: PostgreSQL
--- Reference DDL — actual table creation is in backend/src/loader.py create_tables()
+-- Canonical DDL executed by backend/src/loader.py create_tables().
 
 -- Customers table (deduplicated by cc_num_hashed)
 CREATE TABLE IF NOT EXISTS customers (
@@ -67,6 +67,35 @@ CREATE TABLE IF NOT EXISTS rejected_records (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Remove historical exact duplicates before enforcing concurrent-safe deduplication.
+DELETE FROM rejected_records
+WHERE reject_id IN (
+    SELECT reject_id
+    FROM (
+        SELECT
+            reject_id,
+            ROW_NUMBER() OVER (
+                PARTITION BY
+                    COALESCE(trans_num, ''),
+                    COALESCE(rejection_reason, ''),
+                    COALESCE(stage, ''),
+                    md5(COALESCE(original_data::text, 'null'))
+                ORDER BY reject_id
+            ) AS duplicate_number
+        FROM rejected_records
+    ) duplicates
+    WHERE duplicate_number > 1
+);
+
+-- create_tables() replaces any incompatible same-named legacy index first.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_rejected_records_dedup
+ON rejected_records (
+    COALESCE(trans_num, ''),
+    COALESCE(rejection_reason, ''),
+    COALESCE(stage, ''),
+    md5(COALESCE(original_data::text, 'null'))
+);
+
 -- Model predictions
 CREATE TABLE IF NOT EXISTS model_predictions (
     prediction_id SERIAL PRIMARY KEY,
@@ -91,6 +120,15 @@ CREATE TABLE IF NOT EXISTS model_training_runs (
     model_path VARCHAR(256),
     training_duration_seconds DECIMAL(10,2),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Incremental load progress by independently resumable source.
+CREATE TABLE IF NOT EXISTS pipeline_load_state (
+    id SERIAL PRIMARY KEY,
+    source_table VARCHAR(64) NOT NULL UNIQUE,
+    last_loaded_timestamp BIGINT,
+    rows_loaded INTEGER,
+    loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes for performance

@@ -2,19 +2,18 @@
  * Model metrics, prediction, and retraining UI
  * Fraud Detection Pipeline Dashboard
  */
-"use strict";
 
 // ==================== LOAD MODEL METRICS ====================
 
-async function loadModelMetrics() {
-	const metrics = await api("/api/model/metrics");
+async function loadModelMetrics(signal) {
+	const metrics = await api("/api/model/metrics", { signal });
 	if (!metrics) return;
 
 	// Update metric cards
 	setMetric("accuracy", metrics.accuracy);
 	setMetric("precision", metrics.precision);
 	setMetric("recall", metrics.recall);
-	setMetric("f1", metrics.f1_score);
+	setMetric("f1", metrics.f2_score || metrics.f1_score);  // Prefer F2
 	setMetric("roc-auc", metrics.roc_auc);
 
 	// Render charts
@@ -158,11 +157,12 @@ async function retrainModel() {
 		const result = await api("/api/model/train", {
 			method: "POST",
 			admin: true,
+			timeout: 300000, // 5 min — training takes 2-3 min
 		});
 
 		if (result) {
 			alert(
-				`Training complete!\nBest model: ${result.best_model}\nF1: ${result.best_f1}`,
+				`Training complete!\nBest model: ${result.best_model}\nF2: ${result.best_f2 || result.best_f1}\nThreshold: ${result.tuned_threshold}`,
 			);
 			await loadModelMetrics();
 		} else {
@@ -183,51 +183,51 @@ async function retrainModel() {
 function loadDemoScenario(scenario) {
 	const scenarios = {
 		normal: {
-			amt: 47.0,
-			hour: 13,
+			amt: 45.0,
+			hour: 14,
 			category: "grocery_pos",
 			gender: "F",
 			day_of_week: 2,
 			month: 6,
-			distance_km: 10.0,
+			distance_km: 5.0,
 			city_pop: 88589,
 			age: 46,
 			label: "Transacción Normal",
 		},
 		suspicious: {
-			amt: 950.0,
-			hour: 15,
-			category: "shopping_pos",
+			amt: 920.0,
+			hour: 23,
+			category: "misc_net",
 			gender: "M",
 			day_of_week: 5,
 			month: 11,
-			distance_km: 85.0,
-			city_pop: 45000,
-			age: 50,
+			distance_km: 170.0,
+			city_pop: 5000,
+			age: 38,
 			label: "Transacción Sospechosa",
 		},
 		night: {
-			amt: 800.0,
-			hour: 23,
-			category: "entertainment",
+			amt: 980.0,
+			hour: 2,
+			category: "misc_net",
 			gender: "M",
 			day_of_week: 6,
 			month: 12,
-			distance_km: 90.0,
-			city_pop: 35000,
-			age: 48,
+			distance_km: 180.0,
+			city_pop: 5000,
+			age: 35,
 			label: "Compra Nocturna",
 		},
 		high: {
-			amt: 900.0,
-			hour: 2,
+			amt: 950.0,
+			hour: 3,
 			category: "misc_net",
 			gender: "M",
 			day_of_week: 0,
 			month: 11,
-			distance_km: 100.0,
-			city_pop: 30000,
-			age: 45,
+			distance_km: 200.0,
+			city_pop: 3000,
+			age: 28,
 			label: "Compra Online Madrugada",
 		},
 	};
@@ -275,21 +275,31 @@ async function runDemoPrediction() {
 		resultEl.innerHTML = '<div class="loading">Analizando transacción...</div>';
 	if (placeholderEl) placeholderEl.style.display = "none";
 
-	const result = await api("/api/model/predict", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
-			amt: parseFloat(amt),
-			trans_hour: parseInt(hour) || 12,
-			trans_day_of_week: parseInt(dayOfWeek) || 0,
-			trans_month: parseInt(month) || 6,
-			category: category || "shopping_pos",
-			gender: gender || "M",
-			distance_km: parseFloat(distance) || 0,
-			city_pop: parseInt(cityPop) || 0,
-			age_at_transaction: parseInt(age) || 30,
+	const payload = {
+		amt: parseFloat(amt),
+		trans_hour: parseInt(hour) || 12,
+		trans_day_of_week: parseInt(dayOfWeek) || 0,
+		trans_month: parseInt(month) || 6,
+		category: category || "shopping_pos",
+		gender: gender || "M",
+		distance_km: parseFloat(distance) || 0,
+		city_pop: parseInt(cityPop) || 0,
+		age_at_transaction: parseInt(age) || 30,
+	};
+
+	// Call both predict and predict-debug in parallel
+	const [result, debug] = await Promise.all([
+		api("/api/model/predict", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload),
 		}),
-	});
+		api("/api/model/predict-debug", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload),
+		}),
+	]);
 
 	if (result && result.prediction !== undefined) {
 		const isFraud = result.prediction === 1;
@@ -307,36 +317,50 @@ async function runDemoPrediction() {
                     <div class="predict-icon">${isFraud ? "⚠️" : "✅"}</div>
                     <div class="predict-label">${isFraud ? "FRAUDE DETECTADO" : "TRANSACCIÓN LEGÍTIMA"}</div>
                     <div class="predict-prob">Probabilidad: ${probPct}%</div>
+                    <div class="predict-prob">Umbral: ${((result.decision_threshold || 0) * 100).toFixed(1)}%</div>
                     <div class="predict-risk">Nivel de Riesgo: ${result.risk_level.toUpperCase()}</div>
                 </div>
             `;
 		}
 
-		if (explanationEl) {
-			const reasons = [];
-			if (parseFloat(amt) > 500)
-				reasons.push(
-					"monto elevado ($" + parseFloat(amt).toLocaleString() + ")",
-				);
-			if (parseInt(hour) >= 22 || parseInt(hour) <= 5)
-				reasons.push("horario nocturno (" + hour + "hrs)");
-			if (parseFloat(distance) > 100)
-				reasons.push("distancia inusual (" + distance + "km)");
-			if (parseFloat(distance) > 500)
-				reasons.push("distancia muy alta (" + distance + "km)");
-			if (["shopping_pos", "shopping_net"].includes(category))
-				reasons.push("categoría de compras");
-			if (parseFloat(amt) > 2000) reasons.push("monto muy alto");
-			if (reasons.length === 0)
-				reasons.push("patrones normales de transacción");
+		// Build debug panel
+		if (debug && explanationEl) {
+			const threshold = debug.decision_threshold || 0.414;
+			const prob = debug.probability || 0;
+			const margin = prob - threshold;
+			const marginStr = margin >= 0
+				? `<span style="color:#22c55e">+${(margin * 100).toFixed(2)}% sobre umbral</span>`
+				: `<span style="color:#ef4444">${(margin * 100).toFixed(2)}% bajo umbral</span>`;
+
+			let featureRows = "";
+			if (debug.feature_names && debug.feature_vector) {
+				featureRows = debug.feature_names
+					.map((name, i) => {
+						const val = debug.feature_vector[i];
+						return `<tr><td>${name}</td><td>${typeof val === "number" ? val.toFixed(4) : val}</td></tr>`;
+					})
+					.join("");
+			}
 
 			explanationEl.innerHTML = `
                 <div class="explanation-card">
-                    <h4>📊 Explicación del Modelo</h4>
-                    <p>Factores considerados: <strong>${reasons.join(", ")}</strong></p>
-                    <p>El modelo ${isFraud ? "detectó patrones asociados a transacciones fraudulentas" : "no encontró señales de riesgo"} en esta transacción.</p>
+                    <h4>🔧 Debug del Modelo</h4>
+                    <p><strong>Modelo:</strong> ${debug.model_type || "?"} |
+                       <strong>Probabilidad:</strong> ${(prob * 100).toFixed(2)}% |
+                       <strong>Umbral:</strong> ${(threshold * 100).toFixed(2)}% |
+                       ${marginStr}</p>
+                    <details>
+                        <summary style="cursor:pointer;color:#60a5fa">Ver feature vector (${debug.n_features || "?"} features)</summary>
+                        <table class="cm-table" style="margin-top:8px;font-size:0.85em">
+                            <tr><th>Feature</th><th>Valor</th></tr>
+                            ${featureRows}
+                        </table>
+                    </details>
+                    ${debug.global_fraud_rate !== undefined ? `<p><strong>Fraude global en train:</strong> ${(debug.global_fraud_rate * 100).toFixed(2)}%</p>` : ""}
                 </div>
             `;
+		} else if (explanationEl) {
+			explanationEl.innerHTML = "";
 		}
 	} else {
 		if (resultEl) {
@@ -348,15 +372,16 @@ async function runDemoPrediction() {
                 </div>
             `;
 		}
+		if (explanationEl) explanationEl.innerHTML = "";
 	}
 }
 
-async function loadDemoModelStatus() {
+async function loadDemoModelStatus(signal) {
 	const el = document.getElementById("demo-model-info");
 	if (!el) return;
 
 	try {
-		const metrics = await api("/api/model/metrics");
+		const metrics = await api("/api/model/metrics", { signal });
 		if (metrics) {
 			el.innerHTML = `
                 <div class="model-status-loaded">
@@ -378,8 +403,8 @@ async function loadDemoModelStatus() {
                             <div class="model-metric-value">${metrics.recall?.toFixed(4) || "N/A"}</div>
                         </div>
                         <div class="model-metric-card">
-                            <div class="model-metric-label">F1-Score</div>
-                            <div class="model-metric-value">${metrics.f1_score?.toFixed(4) || "N/A"}</div>
+                            <div class="model-metric-label">F2-Score</div>
+                            <div class="model-metric-value">${(metrics.f2_score || metrics.f1_score)?.toFixed(4) || "N/A"}</div>
                         </div>
                         <div class="model-metric-card">
                             <div class="model-metric-label">ROC-AUC</div>
