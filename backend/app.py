@@ -63,7 +63,7 @@ def raise_sql_service_unavailable(error: SQLAlchemyError) -> None:
     logger.error(f"SQL database unavailable: {error}")
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="SQL database is unavailable",
+        detail="Database connection failed",
     ) from error
 
 
