@@ -26,6 +26,18 @@ app = FastAPI(
 )
 
 
+def initialize_database_schema() -> None:
+    """Initialize API-owned database schema without running data ingestion."""
+    from backend.src.loader import create_tables
+
+    create_tables()
+
+
+@app.on_event("startup")
+def initialize_database_on_startup() -> None:
+    initialize_database_schema()
+
+
 def require_admin_token(authorization: str | None = Header(default=None)) -> None:
     """Protect mutating/expensive endpoints with bearer-token auth."""
     if not ADMIN_API_TOKEN:
@@ -500,63 +512,67 @@ async def data_dictionary():
 
 @app.get("/api/kpis")
 async def get_kpis():
-    """Get pipeline KPIs"""
-    import pandas as pd
+    """Get dashboard KPIs sourced from PostgreSQL."""
+    from sqlalchemy import text
 
-    gold_path = GOLD_DIR / "fraud_gold.parquet"
-    rejected_path = REJECTED_DIR / "fraud_rejected.parquet"
-
-    kpis = {}
-
-    if gold_path.exists():
-        df = pd.read_parquet(gold_path)
-        total_valid = len(df)
-
-        # Completeness (no nulls in critical fields)
-        critical = ["trans_num", "amt", "is_fraud", "trans_date_trans_time"]
-        complete = df[critical].dropna()
-        kpis["completeness_pct"] = (
-            round(len(complete) / total_valid * 100, 2) if total_valid > 0 else 0
+    engine = _get_sql_engine_or_503()
+    with engine.connect() as conn:
+        row = (
+            conn.execute(
+                text("""
+                SELECT
+                    COUNT(*) AS valid_records,
+                    COUNT(*) FILTER (
+                        WHERE trans_num IS NOT NULL
+                          AND amt IS NOT NULL
+                          AND is_fraud IS NOT NULL
+                          AND trans_date_trans_time IS NOT NULL
+                    ) AS complete_records,
+                    COUNT(*) - COUNT(DISTINCT trans_num) AS duplicate_records,
+                    COUNT(*) FILTER (WHERE is_fraud = 1) AS fraud_count,
+                    COUNT(*) FILTER (WHERE is_fraud = 0) AS legit_count,
+                    ROUND(AVG(amt)::numeric, 2) AS amt_mean,
+                    ROUND(
+                        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY amt)::numeric,
+                        2
+                    ) AS amt_median,
+                    ROUND(MAX(amt)::numeric, 2) AS amt_max,
+                    (SELECT COUNT(*) FROM rejected_records) AS rejected_records
+                FROM transactions
+                """)
+            )
+            .mappings()
+            .first()
         )
 
-        # Duplicate rate
-        duplicates = df["trans_num"].duplicated().sum()
-        kpis["duplicate_rate_pct"] = (
-            round(duplicates / total_valid * 100, 4) if total_valid > 0 else 0
-        )
+    valid = int(row["valid_records"] or 0)
+    complete = int(row["complete_records"] or 0)
+    duplicates = int(row["duplicate_records"] or 0)
+    fraud = int(row["fraud_count"] or 0)
+    legit = int(row["legit_count"] or 0)
+    rejected = int(row["rejected_records"] or 0)
+    total = valid + rejected
 
-        # Fraud distribution
-        fraud_dist = df["is_fraud"].value_counts().to_dict()
-        kpis["fraud_count"] = fraud_dist.get(1, 0)
-        kpis["legit_count"] = fraud_dist.get(0, 0)
-        kpis["fraud_pct"] = (
-            round(fraud_dist.get(1, 0) / total_valid * 100, 4) if total_valid > 0 else 0
-        )
-
-        # Amount stats
-        kpis["amt_mean"] = round(float(df["amt"].mean()), 2)
-        kpis["amt_median"] = round(float(df["amt"].median()), 2)
-        kpis["amt_max"] = round(float(df["amt"].max()), 2)
-
-        kpis["valid_records"] = total_valid
-
-    if rejected_path.exists():
-        rejected_df = pd.read_parquet(rejected_path)
-        kpis["rejected_records"] = len(rejected_df)
-        total = kpis.get("valid_records", 0) + len(rejected_df)
-        kpis["rejection_rate_pct"] = (
-            round(len(rejected_df) / total * 100, 4) if total > 0 else 0
-        )
-        kpis["total_records"] = total
-    else:
-        kpis["rejected_records"] = 0
-        kpis["rejection_rate_pct"] = 0
-        kpis["total_records"] = kpis.get("valid_records", 0)
-
-    kpis["status"] = "available" if gold_path.exists() else "no_data"
-    kpis["timestamp"] = datetime.now().isoformat()
-
-    return kpis
+    return {
+        "completeness_pct": round(complete / valid * 100, 2) if valid else 0.0,
+        "duplicate_rate_pct": round(duplicates / valid * 100, 4)
+        if valid
+        else 0.0,
+        "fraud_count": fraud,
+        "legit_count": legit,
+        "fraud_pct": round(fraud / valid * 100, 4) if valid else 0.0,
+        "amt_mean": float(row["amt_mean"]) if row["amt_mean"] is not None else None,
+        "amt_median": float(row["amt_median"])
+        if row["amt_median"] is not None
+        else None,
+        "amt_max": float(row["amt_max"]) if row["amt_max"] is not None else None,
+        "valid_records": valid,
+        "rejected_records": rejected,
+        "rejection_rate_pct": round(rejected / total * 100, 4) if total else 0.0,
+        "total_records": total,
+        "status": "available" if valid else "no_data",
+        "timestamp": datetime.now().isoformat(),
+    }
 
 
 # ==================== SQL READ ENDPOINTS ====================
@@ -743,13 +759,15 @@ async def sql_stats():
             SELECT
                 ROUND(
                     (
-                        COUNT(amt)::float +
-                        COUNT(category)::float +
-                        COUNT(trans_date_trans_time)::float +
-                        COUNT(city)::float +
-                        COUNT(state)::float +
-                        COUNT(merchant_id)::float
-                    ) / (COUNT(*)::float * 6.0) * 100.0,
+                        (
+                            COUNT(amt)::float +
+                            COUNT(category)::float +
+                            COUNT(trans_date_trans_time)::float +
+                            COUNT(city)::float +
+                            COUNT(state)::float +
+                            COUNT(merchant_id)::float
+                        ) / NULLIF(COUNT(*)::float * 6.0, 0) * 100.0
+                    )::numeric,
                     2
                 ) AS completeness_pct
             FROM transactions
@@ -761,10 +779,12 @@ async def sql_stats():
 
     return {
         "total_count": total,
+        "total_transactions": total,
         "fraud_count": fraud,
         "legit_count": main_row["legit_count"] or 0,
         "fraud_pct": round(fraud / total * 100, 2) if total > 0 else 0.0,
         "amt_mean": main_row["amt_mean"],
+        "avg_amt": main_row["amt_mean"],
         "amt_max": main_row["amt_max"],
         "amt_min": main_row["amt_min"],
         "amt_std": main_row["amt_std"],
@@ -805,13 +825,15 @@ async def sql_kpis():
             SELECT
                 ROUND(
                     (
-                        COUNT(amt)::float +
-                        COUNT(category)::float +
-                        COUNT(trans_date_trans_time)::float +
-                        COUNT(city)::float +
-                        COUNT(state)::float +
-                        COUNT(merchant_id)::float
-                    ) / (COUNT(*)::float * 6.0) * 100.0,
+                        (
+                            COUNT(amt)::float +
+                            COUNT(category)::float +
+                            COUNT(trans_date_trans_time)::float +
+                            COUNT(city)::float +
+                            COUNT(state)::float +
+                            COUNT(merchant_id)::float
+                        ) / NULLIF(COUNT(*)::float * 6.0, 0) * 100.0
+                    )::numeric,
                     2
                 ) AS completeness_pct
             FROM transactions
@@ -885,10 +907,10 @@ async def train_model_endpoint(_: None = Depends(require_admin_token)):
     from backend.src.model_train import train_models
 
     try:
-        # Build features
+        # Build features (chronological split: train/val/test)
         feature_data = build_features()
 
-        # Train models
+        # Train models (threshold tuned on validation set)
         train_result = train_models(
             feature_data["X_train"],
             feature_data["y_train"],
@@ -898,36 +920,26 @@ async def train_model_endpoint(_: None = Depends(require_admin_token)):
             scaler_path=feature_data.get("scaler_path"),
             category_fraud_rate_map=feature_data.get("category_fraud_rate_map"),
             global_fraud_rate=feature_data.get("global_fraud_rate"),
+            X_val=feature_data.get("X_val"),
+            y_val=feature_data.get("y_val"),
         )
 
-        # Evaluate best model
+        # Evaluate best model on test set (using threshold from training)
         eval_result = evaluate_model(
             train_result["best_model"],
             feature_data["X_test"],
             feature_data["y_test"],
             feature_data["feature_names"],
+            threshold=train_result["tuned_threshold"],
         )
-
-        # Update metadata with tuned threshold
-        metadata_path = MODELS_DIR / "model_metadata.json"
-        if metadata_path.exists():
-            import json
-
-            with open(metadata_path) as f:
-                metadata = json.load(f)
-            metadata["decision_threshold"] = eval_result["tuned_threshold"]
-            metadata["tuned_f1"] = eval_result["tuned_f1"]
-            with open(metadata_path, "w") as f:
-                json.dump(metadata, f, indent=2, default=str)
-            logger.info(
-                "Updated metadata with tuned threshold: %.4f",
-                eval_result["tuned_threshold"],
-            )
 
         return {
             "status": "success",
             "best_model": train_result["best_model_type"],
-            "best_f1": train_result["best_f1_cv"],
+            "best_f1": train_result["best_f1_cv"],  # backward compat
+            "best_f2": train_result["best_f2_cv"],
+            "scoring": "f2",
+            "tuned_threshold": train_result["tuned_threshold"],
             "models_compared": list(train_result["all_results"].keys()),
             "all_results": train_result["all_results"],
             "metrics": eval_result,
@@ -967,6 +979,27 @@ async def predict_transaction(data: PredictionRequest):
         raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Prediction failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/model/predict-debug")
+async def predict_transaction_debug(data: PredictionRequest):
+    """Debug prediction — returns raw feature vector and probability"""
+    from backend.src.model_predict import (
+        predict_single_debug,
+        prepare_transaction_for_prediction,
+    )
+
+    try:
+        features = prepare_transaction_for_prediction(data.model_dump())
+        result = predict_single_debug(features)
+        return result
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail="Model not trained yet") from e
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:
+        logger.error(f"Debug prediction failed: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

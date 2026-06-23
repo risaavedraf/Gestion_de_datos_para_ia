@@ -27,7 +27,7 @@ APP_ENV = os.getenv("APP_ENV", "development")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 DATA_SAMPLE_SIZE = int(os.getenv("DATA_SAMPLE_SIZE", "10000"))
 ADMIN_API_TOKEN = os.getenv("ADMIN_API_TOKEN", "")
-MODEL_DECISION_THRESHOLD = float(os.getenv("MODEL_DECISION_THRESHOLD", "0.3"))
+MODEL_DECISION_THRESHOLD = float(os.getenv("MODEL_DECISION_THRESHOLD", "0.35"))
 
 # --- PR-1: Seed gate, DB pool ---
 ALLOW_SYNTHETIC_SEED_DEFAULT = os.getenv("ALLOW_SYNTHETIC_SEED", "")

@@ -1,6 +1,8 @@
 {
   "best_model_type": "RandomForest",
-  "best_f1_cv": 0.6086,
+  "best_f1_cv": 0.7847,
+  "best_f2_cv": 0.7847,
+  "scoring": "f2",
   "models_compared": [
     "LogisticRegression",
     "RandomForest",
@@ -9,42 +11,42 @@
   "all_results": {
     "LogisticRegression": {
       "model_type": "LogisticRegression",
-      "cv_f1_mean": 0.0299,
-      "cv_f1_std": 0.0008,
+      "cv_f1_mean": 0.0789,
+      "cv_f1_std": 0.001,
       "cv_scores": [
-        0.0312,
-        0.0289,
-        0.0295,
-        0.0303,
-        0.0298
+        0.0796,
+        0.078,
+        0.0805,
+        0.0785,
+        0.078
       ],
-      "training_duration_seconds": 2.58
+      "training_duration_seconds": 2.88
     },
     "RandomForest": {
       "model_type": "RandomForest",
-      "cv_f1_mean": 0.6086,
-      "cv_f1_std": 0.1737,
+      "cv_f1_mean": 0.7847,
+      "cv_f1_std": 0.0147,
       "cv_scores": [
-        0.7645,
-        0.6702,
-        0.6787,
-        0.6603,
-        0.2693
+        0.7614,
+        0.8037,
+        0.7924,
+        0.7755,
+        0.7904
       ],
-      "training_duration_seconds": 87.74
+      "training_duration_seconds": 54.23
     },
     "XGBClassifier": {
       "model_type": "XGBClassifier",
-      "cv_f1_mean": 0.6011,
-      "cv_f1_std": 0.1117,
+      "cv_f1_mean": 0.7504,
+      "cv_f1_std": 0.0113,
       "cv_scores": [
-        0.7481,
-        0.515,
-        0.5068,
-        0.5086,
-        0.727
+        0.7304,
+        0.7617,
+        0.7462,
+        0.7588,
+        0.7546
       ],
-      "training_duration_seconds": 7.53
+      "training_duration_seconds": 5.65
     }
   },
   "feature_names": [
@@ -63,10 +65,10 @@
     "gender_encoded"
   ],
   "n_features": 13,
-  "n_train_samples": 442846,
+  "n_train_samples": 376419,
   "class_distribution": {
-    "0": 440894,
-    "1": 1952
+    "0": 374694,
+    "1": 1725
   },
   "hyperparameters": {
     "bootstrap": true,
@@ -75,13 +77,10 @@
     "criterion": "gini",
     "max_depth": 20,
     "max_features": "sqrt",
-    "max_leaf_nodes": null,
-    "max_samples": null,
     "min_impurity_decrease": 0.0,
     "min_samples_leaf": 1,
     "min_samples_split": 5,
     "min_weight_fraction_leaf": 0.0,
-    "monotonic_cst": null,
     "n_estimators": 200,
     "n_jobs": -1,
     "oob_score": false,
@@ -90,11 +89,29 @@
     "warm_start": false
   },
   "model_path": "/app/models/best_model.joblib",
-  "trained_at": "2026-05-24T06:28:24.023512",
-  "decision_threshold": 0.3,
-  "scaler_path": null,
-  "category_fraud_rate_map": {},
-  "global_fraud_rate": null,
+  "trained_at": "2026-06-19T05:24:17.561314",
+  "decision_threshold": 0.414,
+  "default_threshold": 0.35,
+  "tuned_f1": 0.8011,
+  "tuned_f2": 0.8011,
+  "scaler_path": "/app/models/scaler.joblib",
+  "category_fraud_rate_map": {
+    "entertainment": 0.0019142278667402908,
+    "food_dining": 0.0017526849642004773,
+    "gas_transport": 0.0029722762901783365,
+    "grocery_net": 0.0025279607783055004,
+    "grocery_pos": 0.010989935237881634,
+    "health_fitness": 0.0018522992671337682,
+    "home": 0.0014126289023873428,
+    "kids_pets": 0.0016355706324206445,
+    "misc_net": 0.011509088953425835,
+    "misc_pos": 0.002731424181639708,
+    "personal_care": 0.0023660194539377325,
+    "shopping_net": 0.014202142655765436,
+    "shopping_pos": 0.004741597829004265,
+    "travel": 0.0029434025733748215
+  },
+  "global_fraud_rate": 0.004582659217520901,
   "category_mapping": {
     "entertainment": 0,
     "food_dining": 1,

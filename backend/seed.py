@@ -190,6 +190,7 @@ def seed_data() -> None:
     # --- Run pipeline stages (full data, no sample limit) ---
     from backend.src.ingestion import ingest
     from backend.src.cleaning import clean
+    from backend.src.loader import load
     from backend.src.validation import validate
 
     print("[seed] Running bronze (ingest)...")
@@ -208,7 +209,19 @@ def seed_data() -> None:
         f"rejected={result.get('rejected', '?')}"
     )
 
-    print("[seed] Pipeline complete. Data layers populated.")
+    if result.get("status") == "error":
+        raise RuntimeError(f"Validation failed: {result}")
+
+    print("[seed] Loading PostgreSQL...")
+    result = load(sample_size=None, incremental=True)
+    print(
+        f"[seed]   -> {result.get('status')} | "
+        f"inserted={result.get('rows_inserted', '?')}"
+    )
+    if result.get("status") == "error":
+        raise RuntimeError(f"PostgreSQL load failed: {result}")
+
+    print("[seed] Pipeline complete. Data layers and PostgreSQL populated.")
 
 
 if __name__ == "__main__":

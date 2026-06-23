@@ -107,14 +107,7 @@
         <h2>📊 Explorador de Dataset</h2>
 
         <div class="dataset-controls">
-          <span id="dataset-source-badge" class="source-badge">📁 Parquet</span>
-          <button
-            id="dataset-source-toggle"
-            class="btn btn-secondary toggle-btn toggle-parquet"
-            onclick="toggleDatasetSource()"
-          >
-            🗄️ Cambiar a SQL
-          </button>
+          <span class="source-badge">🗄️ PostgreSQL</span>
         </div>
 
         <div class="stats-grid">
@@ -302,6 +295,7 @@
             >
           </div>
           <button
+            id="run-pipeline-btn"
             class="btn btn-primary btn-large"
             onclick="runPipelineFromUI()"
           >
@@ -737,7 +731,7 @@ Listo. Click en 'Ejecutar Pipeline Completo' o botones individuales.</pre
             <div class="metric-value" id="metric-recall">—</div>
           </div>
           <div class="metric-card">
-            <div class="metric-label">F1 Score</div>
+            <div class="metric-label">F2 Score</div>
             <div class="metric-value" id="metric-f1">—</div>
           </div>
           <div class="metric-card">

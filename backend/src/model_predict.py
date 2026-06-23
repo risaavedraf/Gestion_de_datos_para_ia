@@ -47,6 +47,10 @@ def predict_single(features: dict, model=None):
 
     feature_vector = [features[fname] for fname in feature_names]
 
+    logger.info(
+        f"Predict features: {dict(zip(feature_names, feature_vector, strict=False))}"
+    )
+
     X = np.array([feature_vector])
 
     # Apply scaler if available
@@ -62,7 +66,7 @@ def predict_single(features: dict, model=None):
         else float(model.predict(X)[0])
     )
     decision_threshold = float(
-        metadata.get("decision_threshold", MODEL_DECISION_THRESHOLD)
+        metadata.get("decision_threshold") or MODEL_DECISION_THRESHOLD
     )
     prediction = 1 if probability >= decision_threshold else 0
     risk_level = get_risk_level(probability, RISK_LOW, RISK_HIGH)
@@ -81,6 +85,59 @@ def predict_single(features: dict, model=None):
     )
 
     return result
+
+
+def predict_single_debug(features: dict, model=None):
+    """
+    Debug version of predict_single that returns raw internals.
+
+    Returns:
+        dict with feature_vector, scaled_vector, probability, threshold, metadata_summary
+    """
+    if model is None:
+        model = load_model()
+
+    metadata = load_metadata()
+    feature_names = metadata.get("feature_names", [])
+
+    if not feature_names:
+        raise ValueError("No feature names in model metadata")
+
+    missing_features = [fname for fname in feature_names if fname not in features]
+    if missing_features:
+        raise ValueError(f"Missing feature values: {missing_features}")
+
+    feature_vector = [features[fname] for fname in feature_names]
+    X = np.array([feature_vector])
+
+    scaled_vector = None
+    scaler_path = metadata.get("scaler_path")
+    if scaler_path:
+        scaler = joblib.load(scaler_path)
+        scaled_vector = scaler.transform(X)[0].tolist()
+        X = scaler.transform(X)
+
+    probability = (
+        float(model.predict_proba(X)[0][1])
+        if hasattr(model, "predict_proba")
+        else float(model.predict(X)[0])
+    )
+    decision_threshold = float(
+        metadata.get("decision_threshold") or MODEL_DECISION_THRESHOLD
+    )
+
+    return {
+        "feature_names": feature_names,
+        "feature_vector": [float(v) for v in feature_vector],
+        "scaled_vector": [float(v) for v in scaled_vector] if scaled_vector else None,
+        "probability": round(probability, 6),
+        "decision_threshold": decision_threshold,
+        "n_features": len(feature_names),
+        "metadata_keys": list(metadata.keys()),
+        "model_type": metadata.get("best_model_type"),
+        "category_mapping_keys": list(metadata.get("category_mapping", {}).keys()),
+        "global_fraud_rate": metadata.get("global_fraud_rate"),
+    }
 
 
 def predict_batch(df: pd.DataFrame, model=None):
@@ -122,7 +179,7 @@ def predict_batch(df: pd.DataFrame, model=None):
         else model.predict(X).astype(float)
     )
     decision_threshold = float(
-        metadata.get("decision_threshold", MODEL_DECISION_THRESHOLD)
+        metadata.get("decision_threshold") or MODEL_DECISION_THRESHOLD
     )
     predictions = (probabilities >= decision_threshold).astype(int)
 
@@ -161,7 +218,7 @@ def prepare_transaction_for_prediction(transaction: dict):
     category_mapping = metadata.get("category_mapping", {})
     gender_mapping = metadata.get("gender_mapping", {"M": 0, "F": 1})
     category_fraud_rate_map = metadata.get("category_fraud_rate_map", {})
-    global_fraud_rate = float(metadata.get("global_fraud_rate", 0.0))
+    global_fraud_rate = float(metadata.get("global_fraud_rate") or 0.0)
 
     category_value = str(transaction.get("category", "")).strip().lower()
     gender_value = str(transaction.get("gender", "")).strip().upper()
@@ -191,6 +248,7 @@ def prepare_transaction_for_prediction(transaction: dict):
         # Category fraud rate (precomputed from training data)
         "category_fraud_rate": float(
             category_fraud_rate_map.get(category_value, global_fraud_rate)
+            or global_fraud_rate
         ),
         # Categorical encodings
         "category_encoded": int(category_mapping[category_value]),

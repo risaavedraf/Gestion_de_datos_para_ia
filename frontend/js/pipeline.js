@@ -5,8 +5,12 @@
 
 // ==================== RUN FULL PIPELINE ====================
 
+const PIPELINE_STAGES = ["bronze", "silver", "gold", "load"];
+const PIPELINE_STAGE_TIMEOUT = 300000; // 5 minutes per stage
+
 async function runPipeline(sampleSize) {
 	const logEl = document.getElementById("pipeline-log");
+	const runBtn = document.getElementById("run-pipeline-btn");
 	const statusEls = {
 		bronze: document.getElementById("status-bronze"),
 		silver: document.getElementById("status-silver"),
@@ -23,77 +27,83 @@ async function runPipeline(sampleSize) {
 	});
 	if (logEl) logEl.textContent = "";
 
-	const url = sampleSize
-		? `/api/pipeline/run?sample_size=${sampleSize}`
-		: "/api/pipeline/run";
+	// Disable Run button during execution
+	if (runBtn) {
+		runBtn.disabled = true;
+		runBtn.textContent = "⏳ Ejecutando...";
+	}
 
+	const startTime = Date.now();
 	log("🚀 Starting pipeline...");
 
 	try {
-		const result = await api(url, { method: "POST", admin: true });
+		for (const stage of PIPELINE_STAGES) {
+			// Update badge to "Running"
+			updateStatus(statusEls[stage], "⏳ Running...");
+			log(`\n🚀 Running ${stage}...`);
 
-		if (result?.status === "success") {
-			const stages = result.stages;
+			const sampleParam = sampleSize ? `?sample_size=${sampleSize}` : "";
+			const url = `/api/pipeline/run/${stage}${sampleParam}`;
 
-			// Bronze
-			if (stages.bronze?.status === "success") {
-				updateStatus(statusEls.bronze, "✅ Complete");
-				log(
-					`✅ Bronze: ${stages.bronze.rows} rows ingested, ${stages.bronze.cols} columns`,
-				);
-			} else {
-				updateStatus(statusEls.bronze, "❌ Failed");
-				log(`❌ Bronze: ${stages.bronze?.error || "Unknown error"}`);
-			}
+			try {
+				const result = await api(url, {
+					method: "POST",
+					admin: true,
+					timeout: PIPELINE_STAGE_TIMEOUT,
+				});
 
-			// Silver
-			if (stages.silver?.status === "success") {
-				updateStatus(statusEls.silver, "✅ Complete");
-				log(`✅ Silver: ${stages.silver.rows_out} rows cleaned, PII removed`);
-			} else {
-				updateStatus(statusEls.silver, "❌ Failed");
-				log(`❌ Silver: ${stages.silver?.error || "Unknown error"}`);
-			}
+				if (result?.status === "success" || result?.status === "available") {
+					updateStatus(statusEls[stage], "✅ Complete");
 
-			// Gold
-			if (stages.gold?.status === "success") {
-				updateStatus(statusEls.gold, "✅ Complete");
-				log(
-					`✅ Gold: ${stages.gold.valid} valid, ${stages.gold.rejected} rejected`,
-				);
-			} else {
-				updateStatus(statusEls.gold, "❌ Failed");
-				log(`❌ Gold: ${stages.gold?.error || "Unknown error"}`);
-			}
+					switch (stage) {
+						case "bronze":
+							log(`✅ Bronze: ${result.rows} rows ingested, ${result.cols} columns`);
+							break;
+						case "silver":
+							log(`✅ Silver: ${result.rows_out} rows cleaned, PII removed`);
+							break;
+						case "gold":
+							log(`✅ Gold: ${result.valid} valid, ${result.rejected} rejected`);
+							break;
+						case "load":
+							log(`✅ Load: ${result.transactions_attempted || "N/A"} transactions loaded`);
+							break;
+					}
+				} else {
+					// Stage failed — stop pipeline
+					updateStatus(statusEls[stage], "❌ Failed");
+					log(`❌ ${stage} failed: ${result?.error || result?.detail || "Unknown error"}`);
 
-			// Load
-			if (stages.load?.status === "success") {
-				updateStatus(statusEls.load, "✅ Complete");
-				log(
-					`✅ Load: ${stages.load.transactions_attempted || "N/A"} transactions loaded`,
-				);
-			} else {
-				updateStatus(statusEls.load, "⚠️ Skipped");
-				log(`⚠️ Load: ${stages.load?.error || "No PostgreSQL configured"}`);
-			}
-
-			const duration =
-				stages.gold?.duration_seconds ||
-				stages.silver?.duration_seconds ||
-				"N/A";
-			log(`\n⏱️ Pipeline complete in ${duration}s`);
-		} else {
-			log(
-				`❌ Pipeline failed: ${result?.error || result?.detail || "Unknown error"}`,
-			);
-			Object.values(statusEls).forEach((el) => {
-				if (el && el.textContent === "⏳ Pending") {
-					updateStatus(el, "❌ Failed");
+					// Mark remaining stages as skipped
+					const currentIdx = PIPELINE_STAGES.indexOf(stage);
+					for (let i = currentIdx + 1; i < PIPELINE_STAGES.length; i++) {
+						updateStatus(statusEls[PIPELINE_STAGES[i]], "⏭️ Skipped");
+					}
+					break;
 				}
-			});
+			} catch (error) {
+				updateStatus(statusEls[stage], "❌ Failed");
+				log(`❌ ${stage} error: ${error.message}`);
+
+				// Mark remaining stages as skipped
+				const currentIdx = PIPELINE_STAGES.indexOf(stage);
+				for (let i = currentIdx + 1; i < PIPELINE_STAGES.length; i++) {
+					updateStatus(statusEls[PIPELINE_STAGES[i]], "⏭️ Skipped");
+				}
+				break;
+			}
 		}
+
+		const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+		log(`\n⏱️ Pipeline complete in ${elapsed}s`);
 	} catch (error) {
-		log(`❌ Error: ${error.message}`);
+		log(`❌ Pipeline error: ${error.message}`);
+	} finally {
+		// Re-enable Run button
+		if (runBtn) {
+			runBtn.disabled = false;
+			runBtn.textContent = "🚀 Ejecutar Pipeline Completo";
+		}
 	}
 }
 
@@ -184,8 +194,8 @@ function log(message) {
 
 // ==================== PIPELINE STATUS ====================
 
-async function loadPipelineStatus() {
-	const status = await api("/api/pipeline/status");
+async function loadPipelineStatus(signal) {
+	const status = await api("/api/pipeline/status", { signal });
 	if (!status) return;
 
 	updateLayerCard("bronze", status.bronze);

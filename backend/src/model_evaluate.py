@@ -11,6 +11,7 @@ from sklearn.metrics import (
     accuracy_score,
     confusion_matrix,
     f1_score,
+    fbeta_score,
     precision_recall_curve,
     precision_score,
     recall_score,
@@ -28,48 +29,40 @@ def evaluate_model(
     model, X_test, y_test, feature_names=None, threshold: float | None = None
 ):
     """
-    Evaluate model on test set.
+    Evaluate model on test set using the threshold from training metadata.
+
+    IMPORTANT: Threshold is NOT tuned here — it was tuned on the validation
+    set during training. Tuning on test would be data leakage.
 
     Args:
         model: Trained sklearn-compatible model
         X_test: Test features
         y_test: Test labels
         feature_names: Feature names for importance
+        threshold: Decision threshold (from metadata, NOT tuned on test)
 
     Returns:
         dict with all evaluation metrics
     """
-    # Predictions
-    decision_threshold = (
-        threshold if threshold is not None else MODEL_DECISION_THRESHOLD
-    )
+    # Use the provided threshold (from training metadata) — do NOT re-tune
+    decision_threshold = threshold if threshold is not None else MODEL_DECISION_THRESHOLD
+
     y_prob = (
         model.predict_proba(X_test)[:, 1]
         if hasattr(model, "predict_proba")
         else model.predict(X_test).astype(float)
     )
 
-    # Tune threshold via precision-recall (F1-maximizing)
+    # Compute PR curve for reporting (but do NOT use it to change the threshold)
     pr_precision, pr_recall, pr_thresholds_all = precision_recall_curve(y_test, y_prob)
+    best_f1_on_test = 0.0
     if len(pr_thresholds_all) > 0:
         f1_scores = (
             2
             * (pr_precision[:-1] * pr_recall[:-1])
             / (pr_precision[:-1] + pr_recall[:-1] + 1e-10)
         )
-        best_idx = int(np.argmax(f1_scores))
-        tuned_threshold = float(pr_thresholds_all[best_idx])
-        tuned_f1 = float(f1_scores[best_idx])
-        decision_threshold = round(tuned_threshold, 4)
-        logger.info(
-            "Threshold tuned: %.4f (F1=%.4f, default was %.4f)",
-            decision_threshold,
-            tuned_f1,
-            MODEL_DECISION_THRESHOLD,
-        )
-    else:
-        tuned_threshold = float(decision_threshold)
-        tuned_f1 = 0.0
+        best_f1_on_test = float(np.max(f1_scores))
 
     y_pred = (y_prob >= decision_threshold).astype(int)
 
@@ -78,6 +71,7 @@ def evaluate_model(
     precision = float(precision_score(y_test, y_pred))
     recall = float(recall_score(y_test, y_pred))
     f1 = float(f1_score(y_test, y_pred))
+    f2 = float(fbeta_score(y_test, y_pred, beta=2))
     roc_auc = float(roc_auc_score(y_test, y_prob))
 
     # Confusion matrix
@@ -115,10 +109,10 @@ def evaluate_model(
         "precision": round(precision, 4),
         "recall": round(recall, 4),
         "f1_score": round(f1, 4),
+        "f2_score": round(f2, 4),
         "roc_auc": round(roc_auc, 4),
         "decision_threshold": decision_threshold,
-        "tuned_threshold": tuned_threshold,
-        "tuned_f1": round(tuned_f1, 4),
+        "best_f1_on_test": round(best_f1_on_test, 4),
         "confusion_matrix": {
             "tn": int(tn),
             "fp": int(fp),
@@ -152,7 +146,7 @@ def evaluate_model(
         json.dump(result, f, indent=2)
 
     logger.info(
-        f"Evaluation: accuracy={accuracy:.4f}, precision={precision:.4f}, recall={recall:.4f}, f1={f1:.4f}, roc_auc={roc_auc:.4f}"
+        f"Evaluation: accuracy={accuracy:.4f}, precision={precision:.4f}, recall={recall:.4f}, f1={f1:.4f}, f2={f2:.4f}, roc_auc={roc_auc:.4f}"
     )
 
     return result

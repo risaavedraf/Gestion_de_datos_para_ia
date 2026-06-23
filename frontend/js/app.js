@@ -5,6 +5,9 @@
 
 // ==================== TAB NAVIGATION ====================
 
+// Global AbortController — one per tab, cancelled on switch
+let activeTabController = null;
+
 document.querySelectorAll(".tab-btn").forEach((btn) => {
 	btn.addEventListener("click", () => {
 		switchTab(btn.dataset.tab);
@@ -12,6 +15,12 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
 });
 
 function switchTab(tabId) {
+	// Abort any in-flight request from the previous tab
+	if (activeTabController) {
+		activeTabController.abort();
+		activeTabController = null;
+	}
+
 	// Remove active from all tabs
 	document
 		.querySelectorAll(".tab-btn")
@@ -33,21 +42,25 @@ function switchTab(tabId) {
 // ==================== DATA LOADING ====================
 
 async function loadTabData(tab) {
+	// Create a new tab-level AbortController
+	activeTabController = new AbortController();
+	const signal = activeTabController.signal;
+
 	switch (tab) {
 		case "overview":
-			await loadOverview();
+			await loadOverview(signal);
 			break;
 		case "dataset":
-			await loadDataset();
+			await loadDataset(signal);
 			break;
 		case "pipeline":
-			await loadPipelineStatus();
+			await loadPipelineStatus(signal);
 			break;
 		case "model":
-			await loadModelMetrics();
+			await loadModelMetrics(signal);
 			break;
 		case "demo":
-			await loadDemoModelStatus();
+			await loadDemoModelStatus(signal);
 			break;
 		// architecture, pmbok, security, cicd are static
 	}
@@ -100,7 +113,13 @@ function clearAdminApiToken() {
 }
 
 async function api(endpoint, options = {}) {
-	const { admin = false, headers = {}, ...fetchOptions } = options;
+	const {
+		admin = false,
+		headers = {},
+		timeout = 30000,
+		signal = null,
+		...fetchOptions
+	} = options;
 	const requestOptions = {
 		...fetchOptions,
 		headers: { ...headers },
@@ -115,22 +134,47 @@ async function api(endpoint, options = {}) {
 		requestOptions.headers.Authorization = `Bearer ${token}`;
 	}
 
+	// Use external signal (tab-level) or create per-request controller
+	const controller = new AbortController();
+	requestOptions.signal = controller.signal;
+
+	// If an external signal is provided, propagate its abort to this controller
+	if (signal) {
+		if (signal.aborted) {
+			controller.abort();
+		} else {
+			signal.addEventListener("abort", () => controller.abort(), { once: true });
+		}
+	}
+
+	const timeoutId = setTimeout(() => controller.abort(), timeout);
+
 	try {
 		const response = await fetch(endpoint, requestOptions);
+		clearTimeout(timeoutId);
 		if (!response.ok) {
 			throw new Error(`HTTP ${response.status}: ${response.statusText}`);
 		}
 		return await response.json();
 	} catch (error) {
+		clearTimeout(timeoutId);
+		if (error.name === "AbortError") {
+			// Don't show alert if the tab-level controller aborted (user switched tabs)
+			if (signal && signal.aborted) return null;
+			const seconds = Math.round(timeout / 1000);
+			alert(`⏱️ Timeout: la petición a ${endpoint} tardó más de ${seconds}s y fue cancelada.`);
+			return null;
+		}
 		console.error(`API error: ${endpoint}`, error);
+		alert(`❌ Error en ${endpoint}: ${error.message}`);
 		return null;
 	}
 }
 
 // ==================== OVERVIEW ====================
 
-async function loadOverview() {
-	const kpis = await api("/api/kpis");
+async function loadOverview(signal) {
+	const kpis = await api("/api/kpis", { signal });
 	if (!kpis) return;
 
 	setText("kpi-total", kpis.total_records?.toLocaleString() || "N/A");
@@ -147,43 +191,10 @@ async function loadOverview() {
 
 // ==================== DATASET ====================
 
-const DATASET_SOURCE_KEY = "fraud-dashboard-dataset-source";
-
-function getDatasetSource() {
-	return window.localStorage.getItem(DATASET_SOURCE_KEY) || "parquet";
-}
-
-function setDatasetSource(source) {
-	window.localStorage.setItem(DATASET_SOURCE_KEY, source);
-}
-
-function toggleDatasetSource() {
-	const current = getDatasetSource();
-	const next = current === "parquet" ? "sql" : "parquet";
-	setDatasetSource(next);
-	updateSourceToggleUI();
-	loadDataset();
-}
-
-function updateSourceToggleUI() {
-	const source = getDatasetSource();
-	const btn = document.getElementById("dataset-source-toggle");
-	if (btn) {
-		btn.textContent =
-			source === "parquet" ? "🗄️ Cambiar a SQL" : "📁 Cambiar a Parquet";
-		btn.className = "btn btn-secondary toggle-btn toggle-" + source;
-	}
-	const badge = document.getElementById("dataset-source-badge");
-	if (badge) {
-		badge.textContent = source === "parquet" ? "📁 Parquet" : "🗄️ PostgreSQL";
-	}
-}
-
-async function loadDatasetFromSQL() {
-	const [transactions, stats, _kpis] = await Promise.all([
-		api("/api/sql/transactions?limit=10&offset=0"),
-		api("/api/sql/stats"),
-		api("/api/sql/kpis"),
+async function loadDataset(signal) {
+	const [transactions, stats] = await Promise.all([
+		api("/api/sql/transactions?limit=10&offset=0", { signal }),
+		api("/api/sql/stats", { signal }),
 	]);
 
 	if (stats) {
@@ -193,60 +204,24 @@ async function loadDatasetFromSQL() {
 			fraud_count: stats.fraud_count || 0,
 			amt_mean: stats.avg_amt ? "$" + stats.avg_amt.toLocaleString() : "—",
 		});
+
+		// Render charts from SQL stats
+		const total = stats.total_transactions || 0;
+		const fraud = stats.fraud_count || 0;
+		if (total > 0) {
+			renderFraudChart({
+				legit: total - fraud,
+				fraud: fraud,
+			});
+		}
+		if (stats.by_category && stats.by_category.length > 0) {
+			renderCategoryChart(stats.by_category);
+		}
 	}
 
 	if (transactions && transactions.transactions) {
 		updateSampleTable(transactions.transactions);
 	}
-
-	// Charts not available from SQL — show placeholder message
-	const fraudChart = document.getElementById("fraud-chart");
-	const categoryChart = document.getElementById("category-chart");
-	if (fraudChart) {
-		const ctx = fraudChart.getContext("2d");
-		ctx.clearRect(0, 0, fraudChart.width, fraudChart.height);
-		ctx.font = "14px sans-serif";
-		ctx.fillStyle = "#888";
-		ctx.textAlign = "center";
-		ctx.fillText(
-			"Charts only available in Parquet mode",
-			fraudChart.width / 2,
-			fraudChart.height / 2,
-		);
-	}
-	if (categoryChart) {
-		const ctx = categoryChart.getContext("2d");
-		ctx.clearRect(0, 0, categoryChart.width, categoryChart.height);
-		ctx.font = "14px sans-serif";
-		ctx.fillStyle = "#888";
-		ctx.textAlign = "center";
-		ctx.fillText(
-			"Charts only available in Parquet mode",
-			categoryChart.width / 2,
-			categoryChart.height / 2,
-		);
-	}
-}
-
-async function loadDataset() {
-	const source = getDatasetSource();
-	updateSourceToggleUI();
-
-	if (source === "sql") {
-		return loadDatasetFromSQL();
-	}
-
-	const [stats, sample, fraudDist, catDist] = await Promise.all([
-		api("/api/dataset/stats"),
-		api("/api/dataset/sample?n=10"),
-		api("/api/dataset/fraud-dist"),
-		api("/api/dataset/category-dist"),
-	]);
-
-	if (stats) updateDatasetStats(stats);
-	if (sample) updateSampleTable(sample.sample);
-	if (fraudDist) renderFraudChart(fraudDist);
-	if (catDist) renderCategoryChart(catDist.categories);
 }
 
 function updateDatasetStats(stats) {
