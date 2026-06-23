@@ -1,20 +1,68 @@
 import json
+import math
 from datetime import datetime
+from decimal import Decimal
+from numbers import Integral, Real
+from pathlib import Path
 
 import pandas as pd
 
 from backend.config.logging_config import setup_logging
-from backend.config.settings import DATABASE_URL, GOLD_DIR, REJECTED_DIR
+from backend.config.settings import GOLD_DIR, REJECTED_DIR
+from backend.src.db import get_engine
 from backend.src.utils import generate_run_id
 
 logger = setup_logging("loader")
 
+_REJECTED_DEDUP_INDEX = "uq_rejected_records_dedup"
 
-def get_engine():
-    """Create SQLAlchemy engine"""
-    from sqlalchemy import create_engine
 
-    return create_engine(DATABASE_URL)
+def _replace_incompatible_rejected_dedup_index(conn) -> None:
+    """Drop a legacy same-named index so canonical DDL can recreate it."""
+    from sqlalchemy import text
+
+    compatible = conn.execute(
+        text("""
+        SELECT
+            index_meta.indisunique
+            AND index_meta.indisvalid
+            AND index_meta.indisready
+            AND NOT index_meta.indisexclusion
+            AND index_meta.indimmediate
+            AND index_meta.indnkeyatts = 4
+            AND index_meta.indnatts = 4
+            AND index_meta.indpred IS NULL
+            AND index_meta.indexprs IS NOT NULL
+            AND access_method.amname = 'btree'
+            AND ARRAY(
+                SELECT pg_get_indexdef(index_meta.indexrelid, position, true)
+                FROM generate_series(1, index_meta.indnkeyatts) AS position
+                ORDER BY position
+            ) = ARRAY[
+                'COALESCE(trans_num, ''''::character varying)',
+                'COALESCE(rejection_reason, ''''::text)',
+                'COALESCE(stage, ''''::character varying)',
+                'md5(COALESCE(original_data::text, ''null''::text))'
+            ]::text[]
+            AND index_meta.indoption = '0 0 0 0'::int2vector
+        FROM pg_catalog.pg_class AS index_class
+        JOIN pg_catalog.pg_namespace AS index_namespace
+          ON index_namespace.oid = index_class.relnamespace
+        JOIN pg_catalog.pg_index AS index_meta
+          ON index_meta.indexrelid = index_class.oid
+        JOIN pg_catalog.pg_class AS table_class
+          ON table_class.oid = index_meta.indrelid
+        JOIN pg_catalog.pg_am AS access_method
+          ON access_method.oid = index_class.relam
+        WHERE index_namespace.nspname = current_schema()
+          AND table_class.relname = 'rejected_records'
+          AND index_class.relname = :index_name
+          AND index_class.relkind = 'i'
+        """),
+        {"index_name": _REJECTED_DEDUP_INDEX},
+    ).scalar()
+    if compatible is False:
+        conn.execute(text(f"DROP INDEX IF EXISTS {_REJECTED_DEDUP_INDEX}"))
 
 
 def create_tables(engine=None):
@@ -24,111 +72,155 @@ def create_tables(engine=None):
 
     from sqlalchemy import text
 
-    ddl = """
-    CREATE TABLE IF NOT EXISTS customers (
-        customer_id VARCHAR(64) PRIMARY KEY,
-        gender VARCHAR(1),
-        city VARCHAR(100),
-        state VARCHAR(2),
-        zip VARCHAR(10),
-        city_pop INTEGER,
-        job VARCHAR(200),
-        age_at_transaction INTEGER
-    );
-
-    CREATE TABLE IF NOT EXISTS merchants (
-        merchant_id SERIAL PRIMARY KEY,
-        merchant_name VARCHAR(200) NOT NULL,
-        category VARCHAR(50) NOT NULL,
-        UNIQUE(merchant_name, category)
-    );
-
-    CREATE TABLE IF NOT EXISTS transactions (
-        trans_num VARCHAR(64) PRIMARY KEY,
-        customer_id VARCHAR(64) REFERENCES customers(customer_id),
-        merchant_id INTEGER REFERENCES merchants(merchant_id),
-        amt DECIMAL(12,2),
-        trans_date_trans_time TIMESTAMP,
-        trans_hour INTEGER,
-        trans_day_of_week INTEGER,
-        trans_month INTEGER,
-        distance_km DECIMAL(10,2),
-        is_fraud INTEGER,
-        unix_time BIGINT,
-        merch_lat DECIMAL(10,6),
-        merch_long DECIMAL(10,6),
-        category VARCHAR(50),
-        city VARCHAR(100),
-        state VARCHAR(2)
-    );
-
-    CREATE TABLE IF NOT EXISTS pipeline_logs (
-        log_id SERIAL PRIMARY KEY,
-        run_id VARCHAR(36),
-        stage VARCHAR(20),
-        status VARCHAR(20),
-        records_in INTEGER,
-        records_out INTEGER,
-        records_rejected INTEGER,
-        duration_seconds DECIMAL(10,2),
-        details TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS rejected_records (
-        reject_id SERIAL PRIMARY KEY,
-        run_id VARCHAR(36),
-        trans_num VARCHAR(64),
-        original_data JSONB,
-        rejection_reason TEXT,
-        stage VARCHAR(20),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS model_predictions (
-        prediction_id SERIAL PRIMARY KEY,
-        trans_num VARCHAR(64) REFERENCES transactions(trans_num),
-        model_version VARCHAR(32),
-        model_type VARCHAR(32),
-        prediction INTEGER NOT NULL,
-        probability DECIMAL(6,4),
-        risk_level VARCHAR(16),
-        features_used JSONB,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS model_training_runs (
-        training_run_id SERIAL PRIMARY KEY,
-        model_type VARCHAR(32),
-        hyperparameters JSONB,
-        cv_scores JSONB,
-        test_metrics JSONB,
-        feature_importance JSONB,
-        model_path VARCHAR(256),
-        training_duration_seconds DECIMAL(10,2),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-    """
+    schema_path = Path(__file__).resolve().parents[1] / "config" / "schema.sql"
+    ddl = schema_path.read_text(encoding="utf-8")
 
     with engine.connect() as conn:
         for statement in ddl.split(";"):
             statement = statement.strip()
             if statement:
+                if f"CREATE UNIQUE INDEX IF NOT EXISTS {_REJECTED_DEDUP_INDEX}" in statement:
+                    _replace_incompatible_rejected_dedup_index(conn)
                 conn.execute(text(statement))
         conn.commit()
 
     logger.info("Database tables created/verified")
 
 
-def load(sample_size: int | None = None) -> dict:
+def _normalize_json_value(value):
+    """Convert pandas/Python values into strict JSON-compatible values."""
+    if isinstance(value, dict):
+        return {str(key): _normalize_json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_normalize_json_value(item) for item in value]
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, Integral):
+        return int(value)
+    if isinstance(value, Decimal):
+        return value if value.is_finite() else None
+    if isinstance(value, Real):
+        numeric = float(value)
+        return numeric if math.isfinite(numeric) else None
+    return value
+
+
+def serialize_rejected_original_data(data: dict) -> str:
+    """Serialize rejected row data as standards-compliant JSON."""
+    normalized = _normalize_json_value(data)
+
+    def encode(value):
+        if isinstance(value, Decimal):
+            return str(value)
+        if isinstance(value, dict):
+            members = (
+                f"{json.dumps(key)}:{encode(item)}" for key, item in value.items()
+            )
+            return "{" + ",".join(members) + "}"
+        if isinstance(value, list):
+            return "[" + ",".join(encode(item) for item in value) + "]"
+        return json.dumps(value, allow_nan=False, default=str)
+
+    return encode(normalized)
+
+
+def _filter_incremental_rows(df: pd.DataFrame, cutoff: int) -> pd.DataFrame:
+    """Keep the cutoff timestamp as overlap; transaction PKs remove replays safely."""
+    return df[df["unix_time"] >= cutoff]
+
+
+def _insert_transaction_records(engine, records: list[dict]) -> int:
+    """Insert transactions and return only rows confirmed inserted by PostgreSQL."""
+    if not records:
+        return 0
+
+    from sqlalchemy import text
+
+    insert_stmt = text("""
+        INSERT INTO transactions (trans_num, customer_id, merchant_id, amt, trans_date_trans_time,
+            trans_hour, trans_day_of_week, trans_month, distance_km, is_fraud,
+            unix_time, merch_lat, merch_long, category, city, state)
+        VALUES (:trans_num, :customer_id, :merchant_id, :amt, :trans_date_trans_time,
+            :trans_hour, :trans_day_of_week, :trans_month, :distance_km, :is_fraud,
+            :unix_time, :merch_lat, :merch_long, :category, :city, :state)
+        ON CONFLICT (trans_num) DO NOTHING
+    """)
+    with engine.connect() as conn:
+        result = conn.execute(insert_stmt, records)
+        conn.commit()
+    return max(result.rowcount or 0, 0)
+
+
+def _load_rejected_records(*, engine, run_id: str, sample_size: int | None) -> int:
+    """Load rejected rows independently so transaction progress cannot skip them."""
+    from sqlalchemy import text
+
+    rejected_path = REJECTED_DIR / "fraud_rejected.parquet"
+    if not rejected_path.exists():
+        return 0
+
+    rejected_df = pd.read_parquet(rejected_path)
+    if sample_size and sample_size < len(rejected_df):
+        rejected_df = rejected_df.head(sample_size)
+
+    exclude_cols = {"rejection_reason", "run_id"}
+    rejected_records = []
+    for row in rejected_df.to_dict(orient="records"):
+        trans_num = row.get("trans_num")
+        reason = row.get("rejection_reason")
+        original_data = {
+            key: value for key, value in row.items() if key not in exclude_cols
+        }
+        rejected_records.append(
+            {
+                "run_id": run_id,
+                "trans_num": str(trans_num) if pd.notna(trans_num) else "unknown",
+                "original_data": serialize_rejected_original_data(original_data),
+                "rejection_reason": str(reason) if pd.notna(reason) else "unknown",
+            }
+        )
+
+    if not rejected_records:
+        return 0
+
+    with engine.connect() as conn:
+        result = conn.execute(
+            text("""
+            INSERT INTO rejected_records (
+                run_id, trans_num, original_data, rejection_reason, stage
+            )
+            VALUES (
+                :run_id, :trans_num, CAST(:original_data AS jsonb),
+                :rejection_reason, 'validation'
+            )
+            ON CONFLICT DO NOTHING
+            """),
+            rejected_records,
+        )
+        conn.commit()
+    return max(result.rowcount or 0, 0)
+
+
+def load(
+    sample_size: int | None = None,
+    incremental: bool = False,
+) -> dict:
     """
     Load Gold data into PostgreSQL with deduplication.
 
     Args:
         sample_size: If set, only load first N rows.
+        incremental: If True, only load rows newer than the latest
+            timestamp already present in the database. Idempotent.
 
     Returns:
-        dict with run_id, customers, merchants, transactions, rejected, status, duration
+        dict with run_id, customers, merchants, transactions, rejected,
+        rows_inserted, last_loaded_timestamp, status, duration
     """
     run_id = generate_run_id()
     start_time = datetime.now()
@@ -145,6 +237,48 @@ def load(sample_size: int | None = None) -> dict:
     df = pd.read_parquet(gold_path)
     if sample_size and sample_size < len(df):
         df = df.head(sample_size)
+
+    # --- Incremental load: compute cutoff timestamp ---
+    if incremental and "unix_time" in df.columns:
+        from sqlalchemy import text
+
+        with engine.connect() as conn:
+            max_in_db = conn.execute(
+                text("SELECT MAX(unix_time) FROM transactions")
+            ).scalar()
+            max_in_state = conn.execute(
+                text(
+                    "SELECT last_loaded_timestamp FROM pipeline_load_state "
+                    "WHERE source_table = 'transactions'"
+                )
+            ).scalar()
+
+        cutoff = max(max_in_db or 0, max_in_state or 0)
+        if cutoff > 0:
+            before = len(df)
+            df = _filter_incremental_rows(df, cutoff)
+            logger.info(
+                "Incremental load: cutoff=%s, new rows=%s (filtered from %s)",
+                cutoff,
+                len(df),
+                before,
+            )
+        else:
+            logger.info("Incremental load: cutoff=0, loading all %s rows", len(df))
+
+    if len(df) == 0:
+        rejected_count = _load_rejected_records(
+            engine=engine, run_id=run_id, sample_size=sample_size
+        )
+        return {
+            "run_id": run_id,
+            "status": "success",
+            "rows_inserted": 0,
+            "rejected_inserted": rejected_count,
+            "message": "No new data to load",
+            "duration_seconds": round((datetime.now() - start_time).total_seconds(), 2),
+            "timestamp": datetime.now().isoformat(),
+        }
 
     logger.info(f"Loading {len(df)} records to PostgreSQL")
 
@@ -172,7 +306,14 @@ def load(sample_size: int | None = None) -> dict:
                 text("""
                 INSERT INTO customers (customer_id, gender, city, state, zip, city_pop, job, age_at_transaction)
                 VALUES (:customer_id, :gender, :city, :state, :zip, :city_pop, :job, :age_at_transaction)
-                ON CONFLICT (customer_id) DO NOTHING
+                ON CONFLICT (customer_id) DO UPDATE SET
+                    gender = EXCLUDED.gender,
+                    city = EXCLUDED.city,
+                    state = EXCLUDED.state,
+                    zip = EXCLUDED.zip,
+                    city_pop = EXCLUDED.city_pop,
+                    job = EXCLUDED.job,
+                    age_at_transaction = EXCLUDED.age_at_transaction
                 """),
                 customer_records,
             )
@@ -236,76 +377,15 @@ def load(sample_size: int | None = None) -> dict:
 
     trans_df = df[trans_cols].copy()
 
-    with engine.connect() as conn:
-        # Bulk insert transactions
-        insert_stmt = text("""
-            INSERT INTO transactions (trans_num, customer_id, merchant_id, amt, trans_date_trans_time,
-                trans_hour, trans_day_of_week, trans_month, distance_km, is_fraud,
-                unix_time, merch_lat, merch_long, category, city, state)
-            VALUES (:trans_num, :customer_id, :merchant_id, :amt, :trans_date_trans_time,
-                :trans_hour, :trans_day_of_week, :trans_month, :distance_km, :is_fraud,
-                :unix_time, :merch_lat, :merch_long, :category, :city, :state)
-            ON CONFLICT (trans_num) DO NOTHING
-        """)
-
-        records = trans_df.to_dict("records")
-        conn.execute(insert_stmt, records)
-        conn.commit()
+    records = trans_df.to_dict("records")
+    rows_inserted = _insert_transaction_records(engine, records)
 
     logger.info(f"Attempted {len(trans_df)} transaction inserts")
 
-    # 4. Insert rejected records
-    rejected_path = REJECTED_DIR / "fraud_rejected.parquet"
-    rejected_count = 0
-    if rejected_path.exists():
-        rejected_df = pd.read_parquet(rejected_path)
-        if sample_size and sample_size < len(rejected_df):
-            rejected_df = rejected_df.head(sample_size)
-
-        with engine.connect() as conn:
-            # Vectorized: build original_data column without iterrows
-            exclude_cols = {"rejection_reason", "run_id"}
-            original_data_series = rejected_df.apply(
-                lambda row: json.dumps(
-                    {k: v for k, v in row.items() if k not in exclude_cols}, default=str
-                ),
-                axis=1,
-            )
-            trans_num_series = (
-                rejected_df["trans_num"]
-                if "trans_num" in rejected_df.columns
-                else pd.Series(["unknown"] * len(rejected_df))
-            )
-            reason_series = (
-                rejected_df["rejection_reason"]
-                if "rejection_reason" in rejected_df.columns
-                else pd.Series(["unknown"] * len(rejected_df))
-            )
-
-            rejected_records = [
-                {
-                    "run_id": run_id,
-                    "trans_num": str(trans_num) if pd.notna(trans_num) else "unknown",
-                    "original_data": str(orig_data),
-                    "rejection_reason": str(reason) if pd.notna(reason) else "unknown",
-                }
-                for trans_num, orig_data, reason in zip(
-                    trans_num_series.tolist(),
-                    original_data_series.tolist(),
-                    reason_series.tolist(),
-                    strict=False,
-                )
-            ]
-            if rejected_records:
-                conn.execute(
-                    text("""
-                    INSERT INTO rejected_records (run_id, trans_num, original_data, rejection_reason, stage)
-                    VALUES (:run_id, :trans_num, :original_data, :rejection_reason, 'validation')
-                """),
-                    rejected_records,
-                )
-            conn.commit()
-        rejected_count = len(rejected_df)
+    # 4. Insert rejected records independently from transaction progress.
+    rejected_count = _load_rejected_records(
+        engine=engine, run_id=run_id, sample_size=sample_size
+    )
 
     # 5. Log pipeline run
     with engine.connect() as conn:
@@ -317,7 +397,7 @@ def load(sample_size: int | None = None) -> dict:
             {
                 "run_id": run_id,
                 "records_in": len(df),
-                "records_out": len(trans_df),
+                "records_out": rows_inserted,
                 "records_rejected": rejected_count,
                 "duration": round((datetime.now() - start_time).total_seconds(), 2),
             },
@@ -326,6 +406,32 @@ def load(sample_size: int | None = None) -> dict:
 
     duration = (datetime.now() - start_time).total_seconds()
 
+    last_ts = None
+    if "unix_time" in df.columns and len(df) > 0:
+        last_ts = int(df["unix_time"].max())
+
+    # 6. Write pipeline_load_state for incremental tracking
+    if last_ts is not None:
+        with engine.connect() as conn:
+            conn.execute(
+                text("""
+                INSERT INTO pipeline_load_state (source_table, last_loaded_timestamp, rows_loaded, loaded_at)
+                VALUES ('transactions', :ts, :rows, CURRENT_TIMESTAMP)
+                ON CONFLICT (source_table) DO UPDATE SET
+                    last_loaded_timestamp = EXCLUDED.last_loaded_timestamp,
+                    rows_loaded = EXCLUDED.rows_loaded,
+                    loaded_at = EXCLUDED.loaded_at
+                """),
+                {"ts": last_ts, "rows": rows_inserted},
+            )
+            conn.commit()
+
+        logger.info(
+            "Load state written: source_table=transactions, last_ts=%s, rows=%s",
+            last_ts,
+            rows_inserted,
+        )
+
     result = {
         "run_id": run_id,
         "status": "success",
@@ -333,6 +439,8 @@ def load(sample_size: int | None = None) -> dict:
         "merchants_inserted": len(merchants_df),
         "transactions_attempted": len(trans_df),
         "rejected_inserted": rejected_count,
+        "rows_inserted": rows_inserted,
+        "last_loaded_timestamp": last_ts,
         "duration_seconds": round(duration, 2),
         "timestamp": datetime.now().isoformat(),
     }

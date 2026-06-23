@@ -13,6 +13,7 @@ from backend.config.settings import (
     BASE_DIR,
     BRONZE_DIR,
     GOLD_DIR,
+    MODELS_DIR,
     REJECTED_DIR,
 )
 from backend.config.logging_config import setup_logging
@@ -24,6 +25,18 @@ app = FastAPI(
     description="API for DataOps pipeline with Lakehouse architecture (Bronze/Silver/Gold)",
     version="1.0.0",
 )
+
+
+def initialize_database_schema() -> None:
+    """Initialize API-owned database schema without running data ingestion."""
+    from backend.src.loader import create_tables
+
+    create_tables()
+
+
+@app.on_event("startup")
+def initialize_database_on_startup() -> None:
+    initialize_database_schema()
 
 
 def require_admin_token(authorization: str | None = Header(default=None)) -> None:
@@ -203,11 +216,38 @@ async def pipeline_status():
     from backend.src.ingestion import get_bronze_stats
     from backend.src.validation import get_gold_stats
 
-    return {
+    result = {
         "bronze": get_bronze_stats(),
         "silver": get_silver_stats(),
         "gold": get_gold_stats(),
     }
+
+    # Try SQL row counts (graceful when DB unavailable)
+    try:
+        from backend.src.db import get_engine
+        from sqlalchemy import text
+
+        engine = get_engine()
+        with engine.connect() as conn:
+            sql_counts = {}
+            for table in [
+                "customers",
+                "merchants",
+                "transactions",
+                "pipeline_logs",
+                "pipeline_load_state",
+            ]:
+                row = conn.execute(
+                    text(f"SELECT COUNT(*) AS cnt FROM {table}")
+                ).fetchone()
+                sql_counts[table] = int(row.cnt) if row else 0
+            result["sql_counts"] = sql_counts
+            logger.info("SQL counts: %s", sql_counts)
+    except Exception as exc:
+        logger.debug("SQL counts unavailable: %s", exc)
+        result["sql_counts"] = None
+
+    return result
 
 
 @app.get("/api/pipeline/logs")
@@ -523,63 +563,352 @@ async def sql_transactions(limit: int = Query(10, ge=1, le=100)):
 
 @app.get("/api/kpis")
 async def get_kpis():
-    """Get pipeline KPIs"""
-    import pandas as pd
+    """Get dashboard KPIs sourced from PostgreSQL."""
+    from sqlalchemy import text
 
-    gold_path = GOLD_DIR / "fraud_gold.parquet"
-    rejected_path = REJECTED_DIR / "fraud_rejected.parquet"
-
-    kpis = {}
-
-    if gold_path.exists():
-        df = pd.read_parquet(gold_path)
-        total_valid = len(df)
-
-        # Completeness (no nulls in critical fields)
-        critical = ["trans_num", "amt", "is_fraud", "trans_date_trans_time"]
-        complete = df[critical].dropna()
-        kpis["completeness_pct"] = (
-            round(len(complete) / total_valid * 100, 2) if total_valid > 0 else 0
+    engine = _get_sql_engine_or_503()
+    with engine.connect() as conn:
+        row = (
+            conn.execute(
+                text("""
+                SELECT
+                    COUNT(*) AS valid_records,
+                    COUNT(*) FILTER (
+                        WHERE trans_num IS NOT NULL
+                          AND amt IS NOT NULL
+                          AND is_fraud IS NOT NULL
+                          AND trans_date_trans_time IS NOT NULL
+                    ) AS complete_records,
+                    COUNT(*) - COUNT(DISTINCT trans_num) AS duplicate_records,
+                    COUNT(*) FILTER (WHERE is_fraud = 1) AS fraud_count,
+                    COUNT(*) FILTER (WHERE is_fraud = 0) AS legit_count,
+                    ROUND(AVG(amt)::numeric, 2) AS amt_mean,
+                    ROUND(
+                        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY amt)::numeric,
+                        2
+                    ) AS amt_median,
+                    ROUND(MAX(amt)::numeric, 2) AS amt_max,
+                    (SELECT COUNT(*) FROM rejected_records) AS rejected_records
+                FROM transactions
+                """)
+            )
+            .mappings()
+            .first()
         )
 
-        # Duplicate rate
-        duplicates = df["trans_num"].duplicated().sum()
-        kpis["duplicate_rate_pct"] = (
-            round(duplicates / total_valid * 100, 4) if total_valid > 0 else 0
+    valid = int(row["valid_records"] or 0)
+    complete = int(row["complete_records"] or 0)
+    duplicates = int(row["duplicate_records"] or 0)
+    fraud = int(row["fraud_count"] or 0)
+    legit = int(row["legit_count"] or 0)
+    rejected = int(row["rejected_records"] or 0)
+    total = valid + rejected
+
+    return {
+        "completeness_pct": round(complete / valid * 100, 2) if valid else 0.0,
+        "duplicate_rate_pct": round(duplicates / valid * 100, 4)
+        if valid
+        else 0.0,
+        "fraud_count": fraud,
+        "legit_count": legit,
+        "fraud_pct": round(fraud / valid * 100, 4) if valid else 0.0,
+        "amt_mean": float(row["amt_mean"]) if row["amt_mean"] is not None else None,
+        "amt_median": float(row["amt_median"])
+        if row["amt_median"] is not None
+        else None,
+        "amt_max": float(row["amt_max"]) if row["amt_max"] is not None else None,
+        "valid_records": valid,
+        "rejected_records": rejected,
+        "rejection_rate_pct": round(rejected / total * 100, 4) if total else 0.0,
+        "total_records": total,
+        "status": "available" if valid else "no_data",
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+# ==================== SQL READ ENDPOINTS ====================
+
+
+def _get_sql_engine_or_503():
+    """Return the shared SQL engine (with connection verified) or raise 503."""
+    try:
+        from backend.src.db import get_engine
+
+        engine = get_engine()
+        # Verify the connection actually works (also warms a pool connection)
+        engine.connect().close()
+        return engine
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Database connection failed. "
+                "Verify DATABASE_URL and that PostgreSQL is running."
+            ),
+        ) from e
+
+
+@app.get("/api/sql/transactions")
+async def sql_transactions(
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    fraud: int | None = Query(None, description="Filter by is_fraud (0 or 1)"),
+    start_date: str | None = Query(None, description="ISO date, e.g. 2020-01-01"),
+    end_date: str | None = Query(None, description="ISO date, e.g. 2020-06-30"),
+    category: str | None = Query(None),
+    min_amt: float | None = Query(None, ge=0),
+    max_amt: float | None = Query(None, ge=0),
+):
+    """List transactions from PostgreSQL with pagination and filtering."""
+    from sqlalchemy import text
+
+    engine = _get_sql_engine_or_503()
+
+    clauses: list[str] = ["1=1"]
+    params: dict = {}
+
+    if fraud is not None:
+        clauses.append("t.is_fraud = :fraud")
+        params["fraud"] = int(fraud)
+    if start_date is not None:
+        clauses.append("t.trans_date_trans_time >= :start_date")
+        params["start_date"] = start_date
+    if end_date is not None:
+        clauses.append("t.trans_date_trans_time <= :end_date")
+        params["end_date"] = end_date
+    if category is not None:
+        clauses.append("LOWER(t.category) = :category")
+        params["category"] = category.strip().lower()
+    if min_amt is not None:
+        clauses.append("t.amt >= :min_amt")
+        params["min_amt"] = float(min_amt)
+    if max_amt is not None:
+        clauses.append("t.amt <= :max_amt")
+        params["max_amt"] = float(max_amt)
+
+    where_clause = " AND ".join(clauses)
+
+    with engine.connect() as conn:
+        total = conn.execute(
+            text(f"SELECT COUNT(*) FROM transactions t WHERE {where_clause}"),
+            params,
+        ).scalar()
+
+        rows = (
+            conn.execute(
+                text(f"""
+                SELECT t.trans_num, t.amt, t.trans_date_trans_time, t.category,
+                       t.is_fraud, t.trans_hour, t.trans_day_of_week, t.trans_month,
+                       t.distance_km, t.unix_time, t.city, t.state,
+                       m.merchant_name
+                FROM transactions t
+                LEFT JOIN merchants m ON t.merchant_id = m.merchant_id
+                WHERE {where_clause}
+                ORDER BY t.trans_date_trans_time DESC
+                LIMIT :limit OFFSET :offset
+            """),
+                {**params, "limit": limit, "offset": offset},
+            )
+            .mappings()
+            .all()
         )
 
-        # Fraud distribution
-        fraud_dist = df["is_fraud"].value_counts().to_dict()
-        kpis["fraud_count"] = fraud_dist.get(1, 0)
-        kpis["legit_count"] = fraud_dist.get(0, 0)
-        kpis["fraud_pct"] = (
-            round(fraud_dist.get(1, 0) / total_valid * 100, 4) if total_valid > 0 else 0
+    return {
+        "transactions": [dict(r) for r in rows],
+        "meta": {
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "next_offset": offset + limit if offset + limit < total else None,
+        },
+    }
+
+
+@app.get("/api/sql/transactions/{trans_num}")
+async def sql_transaction_by_id(trans_num: str):
+    """Get a single transaction by its trans_num."""
+    from sqlalchemy import text
+
+    engine = _get_sql_engine_or_503()
+
+    with engine.connect() as conn:
+        row = (
+            conn.execute(
+                text("""
+                SELECT t.trans_num, t.amt, t.trans_date_trans_time, t.category,
+                       t.is_fraud, t.trans_hour, t.trans_day_of_week, t.trans_month,
+                       t.distance_km, t.unix_time, t.city, t.state,
+                       m.merchant_name
+                FROM transactions t
+                LEFT JOIN merchants m ON t.merchant_id = m.merchant_id
+                WHERE t.trans_num = :trans_num
+            """),
+                {"trans_num": trans_num},
+            )
+            .mappings()
+            .first()
         )
 
-        # Amount stats
-        kpis["amt_mean"] = round(float(df["amt"].mean()), 2)
-        kpis["amt_median"] = round(float(df["amt"].median()), 2)
-        kpis["amt_max"] = round(float(df["amt"].max()), 2)
-
-        kpis["valid_records"] = total_valid
-
-    if rejected_path.exists():
-        rejected_df = pd.read_parquet(rejected_path)
-        kpis["rejected_records"] = len(rejected_df)
-        total = kpis.get("valid_records", 0) + len(rejected_df)
-        kpis["rejection_rate_pct"] = (
-            round(len(rejected_df) / total * 100, 4) if total > 0 else 0
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Transaction not found: {trans_num}",
         )
-        kpis["total_records"] = total
-    else:
-        kpis["rejected_records"] = 0
-        kpis["rejection_rate_pct"] = 0
-        kpis["total_records"] = kpis.get("valid_records", 0)
 
-    kpis["status"] = "available" if gold_path.exists() else "no_data"
-    kpis["timestamp"] = datetime.now().isoformat()
+    return dict(row)
 
-    return kpis
+
+@app.get("/api/sql/stats")
+async def sql_stats():
+    """Get aggregated statistics from PostgreSQL transactions table."""
+    from sqlalchemy import text
+
+    engine = _get_sql_engine_or_503()
+
+    with engine.connect() as conn:
+        # Main aggregates
+        main_row = (
+            conn.execute(
+                text("""
+            SELECT
+                COUNT(*)                                 AS total_count,
+                SUM(CASE WHEN is_fraud = 1 THEN 1 ELSE 0 END) AS fraud_count,
+                SUM(CASE WHEN is_fraud = 0 THEN 1 ELSE 0 END) AS legit_count,
+                ROUND(AVG(amt)::numeric, 2)             AS amt_mean,
+                ROUND(MAX(amt)::numeric, 2)             AS amt_max,
+                ROUND(MIN(amt)::numeric, 2)             AS amt_min,
+                ROUND(STDDEV(amt)::numeric, 2)           AS amt_std,
+                MIN(trans_date_trans_time)              AS date_min,
+                MAX(trans_date_trans_time)              AS date_max
+            FROM transactions
+        """)
+            )
+            .mappings()
+            .first()
+        )
+
+        # By-category breakdown
+        cat_rows = (
+            conn.execute(
+                text("""
+                SELECT
+                    category,
+                    COUNT(*)                       AS count,
+                    SUM(CASE WHEN is_fraud = 1 THEN 1 ELSE 0 END) AS fraud_count
+                FROM transactions
+                GROUP BY category
+                ORDER BY count DESC
+            """)
+            )
+            .mappings()
+            .all()
+        )
+
+        # Completeness: percentage of rows with non-null critical fields
+        completeness = conn.execute(
+            text("""
+            SELECT
+                ROUND(
+                    (
+                        (
+                            COUNT(amt)::float +
+                            COUNT(category)::float +
+                            COUNT(trans_date_trans_time)::float +
+                            COUNT(city)::float +
+                            COUNT(state)::float +
+                            COUNT(merchant_id)::float
+                        ) / NULLIF(COUNT(*)::float * 6.0, 0) * 100.0
+                    )::numeric,
+                    2
+                ) AS completeness_pct
+            FROM transactions
+        """)
+        ).scalar()
+
+    total = main_row["total_count"] or 0
+    fraud = main_row["fraud_count"] or 0
+
+    return {
+        "total_count": total,
+        "total_transactions": total,
+        "fraud_count": fraud,
+        "legit_count": main_row["legit_count"] or 0,
+        "fraud_pct": round(fraud / total * 100, 2) if total > 0 else 0.0,
+        "amt_mean": main_row["amt_mean"],
+        "avg_amt": main_row["amt_mean"],
+        "amt_max": main_row["amt_max"],
+        "amt_min": main_row["amt_min"],
+        "amt_std": main_row["amt_std"],
+        "by_category": [dict(r) for r in cat_rows],
+        "completeness_pct": completeness or 0.0,
+        "date_min": str(main_row["date_min"]) if main_row["date_min"] else None,
+        "date_max": str(main_row["date_max"]) if main_row["date_max"] else None,
+    }
+
+
+@app.get("/api/sql/kpis")
+async def sql_kpis():
+    """Get pipeline KPIs sourced from PostgreSQL."""
+    from sqlalchemy import text
+
+    engine = _get_sql_engine_or_503()
+
+    with engine.connect() as conn:
+        kpi_row = (
+            conn.execute(
+                text("""
+            SELECT
+                COUNT(*)                                   AS total_records,
+                SUM(CASE WHEN is_fraud = 1 THEN 1 ELSE 0 END) AS fraud_count,
+                SUM(CASE WHEN is_fraud = 0 THEN 1 ELSE 0 END) AS legit_count,
+                ROUND(AVG(amt)::numeric, 2)               AS amt_mean,
+                ROUND(MAX(amt)::numeric, 2)               AS amt_max,
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY amt) AS amt_median
+            FROM transactions
+        """)
+            )
+            .mappings()
+            .first()
+        )
+
+        completeness = conn.execute(
+            text("""
+            SELECT
+                ROUND(
+                    (
+                        (
+                            COUNT(amt)::float +
+                            COUNT(category)::float +
+                            COUNT(trans_date_trans_time)::float +
+                            COUNT(city)::float +
+                            COUNT(state)::float +
+                            COUNT(merchant_id)::float
+                        ) / NULLIF(COUNT(*)::float * 6.0, 0) * 100.0
+                    )::numeric,
+                    2
+                ) AS completeness_pct
+            FROM transactions
+        """)
+        ).scalar()
+
+    total = kpi_row["total_records"] or 0
+    fraud = kpi_row["fraud_count"] or 0
+
+    return {
+        "total_records": total,
+        "fraud_count": fraud,
+        "legit_count": kpi_row["legit_count"] or 0,
+        "fraud_pct": round(fraud / total * 100, 2) if total > 0 else 0.0,
+        "amt_mean": kpi_row["amt_mean"],
+        "amt_median": round(float(kpi_row["amt_median"]), 2)
+        if kpi_row["amt_median"] is not None
+        else None,
+        "amt_max": kpi_row["amt_max"],
+        "completeness_pct": completeness or 0.0,
+        "status": "available" if total > 0 else "no_data",
+        "source": "postgresql",
+        "timestamp": datetime.now().isoformat(),
+    }
 
 
 # ==================== VALIDATION ====================
@@ -629,30 +958,39 @@ async def train_model_endpoint(_: None = Depends(require_admin_token)):
     from backend.src.model_train import train_models
 
     try:
-        # Build features
+        # Build features (chronological split: train/val/test)
         feature_data = build_features()
 
-        # Train models
+        # Train models (threshold tuned on validation set)
         train_result = train_models(
             feature_data["X_train"],
             feature_data["y_train"],
             feature_data["feature_names"],
             category_mapping=feature_data.get("category_mapping"),
             gender_mapping=feature_data.get("gender_mapping"),
+            scaler_path=feature_data.get("scaler_path"),
+            category_fraud_rate_map=feature_data.get("category_fraud_rate_map"),
+            global_fraud_rate=feature_data.get("global_fraud_rate"),
+            X_val=feature_data.get("X_val"),
+            y_val=feature_data.get("y_val"),
         )
 
-        # Evaluate best model
+        # Evaluate best model on test set (using threshold from training)
         eval_result = evaluate_model(
             train_result["best_model"],
             feature_data["X_test"],
             feature_data["y_test"],
             feature_data["feature_names"],
+            threshold=train_result["tuned_threshold"],
         )
 
         return {
             "status": "success",
             "best_model": train_result["best_model_type"],
-            "best_f1": train_result["best_f1_cv"],
+            "best_f1": train_result["best_f1_cv"],  # backward compat
+            "best_f2": train_result["best_f2_cv"],
+            "scoring": "f2",
+            "tuned_threshold": train_result["tuned_threshold"],
             "models_compared": list(train_result["all_results"].keys()),
             "all_results": train_result["all_results"],
             "metrics": eval_result,
@@ -692,6 +1030,27 @@ async def predict_transaction(data: PredictionRequest):
         raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Prediction failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/model/predict-debug")
+async def predict_transaction_debug(data: PredictionRequest):
+    """Debug prediction — returns raw feature vector and probability"""
+    from backend.src.model_predict import (
+        predict_single_debug,
+        prepare_transaction_for_prediction,
+    )
+
+    try:
+        features = prepare_transaction_for_prediction(data.model_dump())
+        result = predict_single_debug(features)
+        return result
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail="Model not trained yet") from e
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:
+        logger.error(f"Debug prediction failed: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

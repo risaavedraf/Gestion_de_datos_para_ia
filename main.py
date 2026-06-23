@@ -79,22 +79,30 @@ def run_train():
     print("Building features...")
     feature_data = build_features()
 
-    print(f"Training {3} models with 5-fold CV...")
+    print(f"Training {3} models with 5-fold stratified CV...")
     train_result = train_models(
         feature_data["X_train"],
         feature_data["y_train"],
         feature_data["feature_names"],
-        category_mapping=feature_data.get("category_mapping")
+        category_mapping=feature_data.get("category_mapping"),
+        scaler_path=feature_data.get("scaler_path"),
+        category_fraud_rate_map=feature_data.get("category_fraud_rate_map"),
+        global_fraud_rate=feature_data.get("global_fraud_rate"),
+        gender_mapping=feature_data.get("gender_mapping"),
+        X_val=feature_data.get("X_val"),
+        y_val=feature_data.get("y_val"),
     )
 
     print(f"Best model: {train_result['best_model_type']} (F1={train_result['best_f1_cv']:.4f})")
+    print(f"Tuned threshold: {train_result['tuned_threshold']:.4f}")
 
     print("Evaluating on test set...")
     eval_result = evaluate_model(
         train_result["best_model"],
         feature_data["X_test"],
         feature_data["y_test"],
-        feature_data["feature_names"]
+        feature_data["feature_names"],
+        threshold=train_result["tuned_threshold"],
     )
 
     print(f"\nTest Metrics:")
@@ -103,6 +111,7 @@ def run_train():
     print(f"  Recall:    {eval_result['recall']:.4f}")
     print(f"  F1-Score:  {eval_result['f1_score']:.4f}")
     print(f"  ROC-AUC:   {eval_result['roc_auc']:.4f}")
+    print(f"  Threshold: {eval_result['decision_threshold']:.4f}")
     print(f"\nModel saved to: {train_result['model_path']}")
 
     return {"train": train_result, "evaluation": eval_result}

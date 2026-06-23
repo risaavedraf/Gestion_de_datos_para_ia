@@ -3,15 +3,21 @@ schema: spec-driven
 context: |
   Project: Gestion_de_datos_para_ia (ITY1101 - Duoc UC)
   Type: DataOps pipeline for credit card fraud detection
-  Declared stack: Python/FastAPI, HTML/CSS/JS frontend, PostgreSQL, Docker, GitHub Actions, Render
-  Detected stack: None (repo is empty of source code, build files, or CI config)
-  Data: fraudTest.csv with 23 columns including target is_fraud
-  Architecture: Lakehouse (Bronze/Silver/Gold) — declared, not yet implemented
+  Stack: Python 3.11, FastAPI 0.104+, Pydantic v2, SQLAlchemy 2.0, psycopg2-binary
+  Frontend: Vanilla JS + HTML/CSS (no framework, served by FastAPI StaticFiles)
+  Database: PostgreSQL 15 (Docker), SQLite fallback for CI
+  Data: CSV → Parquet Lakehouse (Bronze/Silver/Gold) with PyArrow, Pandas
+  ML: scikit-learn, XGBoost, imbalanced-learn (train/predict in pipeline)
+  Infrastructure: Docker multi-stage build, docker-compose, GitHub Actions CI, Render deploy
+  Architecture: Lakehouse medallion (Bronze→Silver→Gold→Load) + FastAPI REST API + dashboard
+  Auth: Bearer token (ADMIN_API_TOKEN) for mutating endpoints
+  Tests: pytest + pytest-asyncio + FastAPI TestClient + httpx
 
 rules:
   proposal:
     - Include rollback plan for risky changes
     - Validate Bronze/Silver/Gold layer impact for data pipeline changes
+    - Consider PostgreSQL vs Parquet source for data reads
   specs:
     - Use Given/When/Then for scenarios
     - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
@@ -23,12 +29,12 @@ rules:
     - Group by phase, use hierarchical numbering
     - Keep tasks completable in one session
   apply:
-    follow_existing: false
-    tdd: false
-    test_command: ""
+    follow_existing: true
+    tdd: true
+    test_command: "pytest backend/tests/ -v --tb=short"
   verify:
-    test_command: ""
-    build_command: ""
+    test_command: "pytest backend/tests/ -v --tb=short"
+    build_command: "python -c \"from backend.app import app; print('Imports OK')\""
     coverage_threshold: 0
   archive:
     - Warn before merging destructive deltas

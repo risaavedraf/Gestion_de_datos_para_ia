@@ -1,6 +1,8 @@
 {
   "best_model_type": "RandomForest",
-  "best_f1_cv": 0.7941,
+  "best_f1_cv": 0.7847,
+  "best_f2_cv": 0.7847,
+  "scoring": "f2",
   "models_compared": [
     "LogisticRegression",
     "RandomForest",
@@ -9,42 +11,42 @@
   "all_results": {
     "LogisticRegression": {
       "model_type": "LogisticRegression",
-      "cv_f1_mean": 0.0854,
-      "cv_f1_std": 0.0025,
+      "cv_f1_mean": 0.0789,
+      "cv_f1_std": 0.001,
       "cv_scores": [
-        0.0838,
-        0.0859,
-        0.0859,
-        0.0818,
-        0.0894
+        0.0796,
+        0.078,
+        0.0805,
+        0.0785,
+        0.078
       ],
-      "training_duration_seconds": 78.04
+      "training_duration_seconds": 2.88
     },
     "RandomForest": {
       "model_type": "RandomForest",
-      "cv_f1_mean": 0.7941,
-      "cv_f1_std": 0.0229,
+      "cv_f1_mean": 0.7847,
+      "cv_f1_std": 0.0147,
       "cv_scores": [
-        0.8305,
-        0.789,
-        0.7711,
-        0.7709,
-        0.8087
+        0.7614,
+        0.8037,
+        0.7924,
+        0.7755,
+        0.7904
       ],
-      "training_duration_seconds": 95.98
+      "training_duration_seconds": 54.23
     },
     "XGBClassifier": {
       "model_type": "XGBClassifier",
-      "cv_f1_mean": 0.6407,
-      "cv_f1_std": 0.016,
+      "cv_f1_mean": 0.7504,
+      "cv_f1_std": 0.0113,
       "cv_scores": [
-        0.624,
-        0.6511,
-        0.6186,
-        0.6554,
-        0.6544
+        0.7304,
+        0.7617,
+        0.7462,
+        0.7588,
+        0.7546
       ],
-      "training_duration_seconds": 8.04
+      "training_duration_seconds": 5.65
     }
   },
   "feature_names": [
@@ -55,14 +57,18 @@
     "distance_km",
     "city_pop",
     "age_at_transaction",
+    "amt_per_city_pop",
+    "distance_x_amt",
+    "hour_is_night",
+    "category_fraud_rate",
     "category_encoded",
     "gender_encoded"
   ],
-  "n_features": 9,
-  "n_train_samples": 442846,
+  "n_features": 13,
+  "n_train_samples": 376419,
   "class_distribution": {
-    "0": 441137,
-    "1": 1709
+    "0": 374694,
+    "1": 1725
   },
   "hyperparameters": {
     "bootstrap": true,
@@ -71,13 +77,10 @@
     "criterion": "gini",
     "max_depth": 20,
     "max_features": "sqrt",
-    "max_leaf_nodes": null,
-    "max_samples": null,
     "min_impurity_decrease": 0.0,
     "min_samples_leaf": 1,
     "min_samples_split": 5,
     "min_weight_fraction_leaf": 0.0,
-    "monotonic_cst": null,
     "n_estimators": 200,
     "n_jobs": -1,
     "oob_score": false,
@@ -86,22 +89,44 @@
     "warm_start": false
   },
   "model_path": "/app/models/best_model.joblib",
-  "trained_at": "2026-05-16T06:29:50.463673",
+  "trained_at": "2026-06-19T05:24:17.561314",
+  "decision_threshold": 0.414,
+  "default_threshold": 0.35,
+  "tuned_f1": 0.8011,
+  "tuned_f2": 0.8011,
+  "scaler_path": "/app/models/scaler.joblib",
+  "category_fraud_rate_map": {
+    "entertainment": 0.0019142278667402908,
+    "food_dining": 0.0017526849642004773,
+    "gas_transport": 0.0029722762901783365,
+    "grocery_net": 0.0025279607783055004,
+    "grocery_pos": 0.010989935237881634,
+    "health_fitness": 0.0018522992671337682,
+    "home": 0.0014126289023873428,
+    "kids_pets": 0.0016355706324206445,
+    "misc_net": 0.011509088953425835,
+    "misc_pos": 0.002731424181639708,
+    "personal_care": 0.0023660194539377325,
+    "shopping_net": 0.014202142655765436,
+    "shopping_pos": 0.004741597829004265,
+    "travel": 0.0029434025733748215
+  },
+  "global_fraud_rate": 0.004582659217520901,
   "category_mapping": {
-    "personal_care": 0,
-    "health_fitness": 1,
-    "misc_pos": 2,
-    "travel": 3,
-    "kids_pets": 4,
-    "shopping_pos": 5,
-    "food_dining": 6,
-    "home": 7,
-    "entertainment": 8,
-    "shopping_net": 9,
-    "misc_net": 10,
-    "grocery_pos": 11,
-    "gas_transport": 12,
-    "grocery_net": 13
+    "entertainment": 0,
+    "food_dining": 1,
+    "gas_transport": 2,
+    "grocery_net": 3,
+    "grocery_pos": 4,
+    "health_fitness": 5,
+    "home": 6,
+    "kids_pets": 7,
+    "misc_net": 8,
+    "misc_pos": 9,
+    "personal_care": 10,
+    "shopping_net": 11,
+    "shopping_pos": 12,
+    "travel": 13
   },
   "gender_mapping": {
     "M": 0,
