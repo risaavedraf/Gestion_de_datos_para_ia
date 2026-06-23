@@ -516,48 +516,6 @@ async def data_dictionary():
     return dictionary
 
 
-# ==================== SQL ====================
-
-
-@app.get("/api/sql/transactions")
-async def sql_transactions(limit: int = Query(10, ge=1, le=100)):
-    """Read recent transactions from the PostgreSQL serving layer."""
-    from sqlalchemy import text
-
-    from backend.src.loader import get_engine
-
-    try:
-        engine = get_engine()
-        with engine.connect() as conn:
-            result = conn.execute(
-                text("""
-                    SELECT
-                        trans_num,
-                        customer_id,
-                        merchant_id,
-                        amt,
-                        trans_date_trans_time,
-                        trans_hour,
-                        trans_day_of_week,
-                        trans_month,
-                        distance_km,
-                        is_fraud,
-                        category,
-                        city,
-                        state
-                    FROM transactions
-                    ORDER BY trans_date_trans_time DESC NULLS LAST
-                    LIMIT :limit
-                """),
-                {"limit": limit},
-            )
-            transactions = [dict(row._mapping) for row in result]
-    except SQLAlchemyError as error:
-        raise_sql_service_unavailable(error)
-
-    return {"transactions": transactions, "total": len(transactions)}
-
-
 # ==================== KPIs ====================
 
 

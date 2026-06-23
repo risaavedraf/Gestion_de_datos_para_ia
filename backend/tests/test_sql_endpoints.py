@@ -63,7 +63,12 @@ def _pg_is_available():
     try:
         from backend.src.db import get_engine
 
-        get_engine().connect().close()
+        engine = get_engine()
+        if engine.dialect.name != "postgresql":
+            return False
+
+        with engine.connect():
+            pass
         return True
     except Exception:
         return False
