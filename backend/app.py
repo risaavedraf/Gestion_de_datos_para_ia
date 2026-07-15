@@ -15,10 +15,13 @@ from backend.config.settings import (
     GOLD_DIR,
     MODELS_DIR,
     REJECTED_DIR,
+    REPORTS_DIR,
 )
 from backend.config.logging_config import setup_logging
+from backend.src.metrics import PerformanceMetricsStore
 
 logger = setup_logging("api")
+metrics_store = PerformanceMetricsStore(REPORTS_DIR / "performance_metrics.jsonl")
 
 app = FastAPI(
     title="Pipeline DataOps - Credit Card Fraud Detection",
@@ -136,35 +139,33 @@ async def run_pipeline(
     from backend.src.validation import validate
 
     try:
-        # Bronze
-        bronze_result = ingest(sample_size=sample_size)
-        if bronze_result.get("status") == "error":
-            raise HTTPException(status_code=500, detail=bronze_result)
+        with metrics_store.measure("pipeline.run", sample_size=sample_size) as metric:
+            bronze_result = ingest(sample_size=sample_size)
+            if bronze_result.get("status") == "error":
+                raise HTTPException(status_code=500, detail=bronze_result)
 
-        # Silver
-        silver_result = clean(sample_size=sample_size)
-        if silver_result.get("status") == "error":
-            raise HTTPException(status_code=500, detail=silver_result)
+            silver_result = clean(sample_size=sample_size)
+            if silver_result.get("status") == "error":
+                raise HTTPException(status_code=500, detail=silver_result)
 
-        # Gold
-        gold_result = validate(sample_size=sample_size)
-        if gold_result.get("status") == "error":
-            raise HTTPException(status_code=500, detail=gold_result)
+            gold_result = validate(sample_size=sample_size)
+            if gold_result.get("status") == "error":
+                raise HTTPException(status_code=500, detail=gold_result)
 
-        # Load
-        load_result = load(sample_size=sample_size)
-        if load_result.get("status") == "error":
-            raise HTTPException(status_code=500, detail=load_result)
+            load_result = load(sample_size=sample_size)
+            if load_result.get("status") == "error":
+                raise HTTPException(status_code=500, detail=load_result)
 
-        return {
-            "status": "success",
-            "stages": {
-                "bronze": bronze_result,
-                "silver": silver_result,
-                "gold": gold_result,
-                "load": load_result,
-            },
-        }
+            metric.set_rows_processed(bronze_result.get("rows"))
+            return {
+                "status": "success",
+                "stages": {
+                    "bronze": bronze_result,
+                    "silver": silver_result,
+                    "gold": gold_result,
+                    "load": load_result,
+                },
+            }
     except HTTPException:
         raise
     except Exception as e:
@@ -198,10 +199,16 @@ async def run_stage(
         )
 
     try:
-        result = stage_map[stage]()
-        if result.get("status") == "error":
-            raise HTTPException(status_code=500, detail=result)
-        return result
+        with metrics_store.measure(
+            "pipeline.stage", stage=stage, sample_size=sample_size
+        ) as metric:
+            result = stage_map[stage]()
+            if result.get("status") == "error":
+                raise HTTPException(status_code=500, detail=result)
+            metric.set_rows_processed(
+                result.get("rows") or result.get("rows_out") or result.get("total")
+            )
+            return result
     except HTTPException:
         raise
     except Exception as e:
@@ -269,6 +276,12 @@ async def pipeline_logs(limit: int = Query(10, description="Number of log entrie
             pass
 
     return {"logs": logs}
+
+
+@app.get("/api/metrics/performance")
+async def performance_metrics(limit: int = Query(100, ge=1, le=500)):
+    """Return performance history and aggregate values for the dashboard."""
+    return {"summary": metrics_store.summary(), "history": metrics_store.history(limit)}
 
 
 # ==================== DATASET ====================
@@ -916,44 +929,40 @@ async def train_model_endpoint(_: None = Depends(require_admin_token)):
     from backend.src.model_train import train_models
 
     try:
-        # Build features (chronological split: train/val/test)
-        feature_data = build_features()
-
-        # Train models (threshold tuned on validation set)
-        train_result = train_models(
-            feature_data["X_train"],
-            feature_data["y_train"],
-            feature_data["feature_names"],
-            category_mapping=feature_data.get("category_mapping"),
-            gender_mapping=feature_data.get("gender_mapping"),
-            scaler_path=feature_data.get("scaler_path"),
-            category_fraud_rate_map=feature_data.get("category_fraud_rate_map"),
-            global_fraud_rate=feature_data.get("global_fraud_rate"),
-            X_val=feature_data.get("X_val"),
-            y_val=feature_data.get("y_val"),
-        )
-
-        # Evaluate best model on test set (using threshold from training)
-        eval_result = evaluate_model(
-            train_result["best_model"],
-            feature_data["X_test"],
-            feature_data["y_test"],
-            feature_data["feature_names"],
-            threshold=train_result["tuned_threshold"],
-        )
-
-        return {
-            "status": "success",
-            "best_model": train_result["best_model_type"],
-            "best_f1": train_result["best_f1_cv"],  # backward compat
-            "best_f2": train_result["best_f2_cv"],
-            "scoring": "f2",
-            "tuned_threshold": train_result["tuned_threshold"],
-            "models_compared": list(train_result["all_results"].keys()),
-            "all_results": train_result["all_results"],
-            "metrics": eval_result,
-            "duration_seconds": train_result["duration_seconds"],
-        }
+        with metrics_store.measure("model.train") as metric:
+            feature_data = build_features()
+            train_result = train_models(
+                feature_data["X_train"],
+                feature_data["y_train"],
+                feature_data["feature_names"],
+                category_mapping=feature_data.get("category_mapping"),
+                gender_mapping=feature_data.get("gender_mapping"),
+                scaler_path=feature_data.get("scaler_path"),
+                category_fraud_rate_map=feature_data.get("category_fraud_rate_map"),
+                global_fraud_rate=feature_data.get("global_fraud_rate"),
+                X_val=feature_data.get("X_val"),
+                y_val=feature_data.get("y_val"),
+            )
+            eval_result = evaluate_model(
+                train_result["best_model"],
+                feature_data["X_test"],
+                feature_data["y_test"],
+                feature_data["feature_names"],
+                threshold=train_result["tuned_threshold"],
+            )
+            metric.set_rows_processed(len(feature_data["X_train"]))
+            return {
+                "status": "success",
+                "best_model": train_result["best_model_type"],
+                "best_f1": train_result["best_f1_cv"],  # backward compat
+                "best_f2": train_result["best_f2_cv"],
+                "scoring": "f2",
+                "tuned_threshold": train_result["tuned_threshold"],
+                "models_compared": list(train_result["all_results"].keys()),
+                "all_results": train_result["all_results"],
+                "metrics": eval_result,
+                "duration_seconds": train_result["duration_seconds"],
+            }
     except Exception as e:
         logger.error(f"Training failed: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -1028,18 +1037,21 @@ async def predict_batch_endpoint(
         if not transactions:
             raise HTTPException(status_code=400, detail="No transactions provided")
 
-        # Prepare features for each transaction
-        features_list = [
-            prepare_transaction_for_prediction(t.model_dump()) for t in transactions
-        ]
-        df = pd.DataFrame(features_list)
-
-        result_df = predict_batch(df)
-
-        predictions = result_df[
-            ["prediction", "probability", "risk_level", "label"]
-        ].to_dict("records")
-        return {"predictions": predictions, "total": len(predictions)}
+        with metrics_store.measure(
+            "model.predict_batch", batch_size=len(transactions)
+        ) as metric:
+            features_list = [
+                prepare_transaction_for_prediction(t.model_dump()) for t in transactions
+            ]
+            df = pd.DataFrame(features_list)
+            result_df = predict_batch(df)
+            prediction_columns = ["prediction", "probability", "risk_level", "label"]
+            predictions = [
+                dict(zip(prediction_columns, row))
+                for row in result_df[prediction_columns].itertuples(index=False, name=None)
+            ]
+            metric.set_rows_processed(len(predictions))
+            return {"predictions": predictions, "total": len(predictions)}
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail="Model not trained yet") from e
     except ValueError as e:

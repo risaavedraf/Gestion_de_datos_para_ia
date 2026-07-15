@@ -14,6 +14,7 @@
       <div class="nav-brand">🔍 Pipeline de Detección de Fraude</div>
       <div class="nav-tabs">
         <button class="tab-btn active" data-tab="overview">Overview</button>
+        <button class="tab-btn" data-tab="performance">Rendimiento</button>
         <button class="tab-btn" data-tab="dataset">Dataset</button>
         <button class="tab-btn" data-tab="architecture">Architecture</button>
         <button class="tab-btn" data-tab="pipeline">Pipeline</button>
@@ -379,6 +380,65 @@
           <pre id="pipeline-log" class="log-viewer">
 Listo. Click en 'Ejecutar Pipeline Completo' o botones individuales.</pre
           >
+        </div>
+      </section>
+
+      <!-- ==================== PERFORMANCE ==================== -->
+      <section id="performance" class="tab-content">
+        <div class="section-heading">
+          <div>
+            <h2>⚡ Rendimiento</h2>
+            <p>Duración y uso de memoria de las operaciones costosas.</p>
+          </div>
+          <button class="btn btn-secondary" onclick="loadPerformanceMetrics()">
+            ↻ Actualizar
+          </button>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Última duración</div>
+            <div class="stat-value" id="perf-last-duration">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Memoria pico</div>
+            <div class="stat-value" id="perf-peak-memory">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Operaciones registradas</div>
+            <div class="stat-value" id="perf-total-operations">—</div>
+          </div>
+        </div>
+
+        <div class="chart-container performance-chart-container">
+          <h3>Histórico de duración y memoria</h3>
+          <div class="performance-chart-area">
+            <canvas id="performance-chart"></canvas>
+          </div>
+        </div>
+
+        <div class="table-section">
+          <h3>Últimas ejecuciones</h3>
+          <p id="performance-empty" class="empty-state" hidden>
+            Todavía no hay operaciones registradas. Ejecutá el pipeline o
+            entrená el modelo.
+          </p>
+          <div class="table-wrapper">
+            <table id="performance-history" class="data-table">
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Operación</th>
+                  <th>Etapa</th>
+                  <th>Duración</th>
+                  <th>Memoria pico</th>
+                  <th>Registros</th>
+                  <th>Estado</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
       </section>
 
@@ -1170,6 +1230,7 @@ Listo. Click en 'Ejecutar Pipeline Completo' o botones individuales.</pre
 
     <script src="/js/app.js"></script>
     <script src="/js/charts.js"></script>
+    <script src="/js/performance.js"></script>
     <script src="/js/pipeline.js"></script>
     <script src="/js/model.js"></script>
   </body>

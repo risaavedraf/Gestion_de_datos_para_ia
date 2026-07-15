@@ -56,6 +56,9 @@ async function loadTabData(tab) {
 		case "pipeline":
 			await loadPipelineStatus(signal);
 			break;
+		case "performance":
+			await loadPerformanceMetrics(signal);
+			break;
 		case "model":
 			await loadModelMetrics(signal);
 			break;
@@ -143,17 +146,28 @@ async function api(endpoint, options = {}) {
 		if (signal.aborted) {
 			controller.abort();
 		} else {
-			signal.addEventListener("abort", () => controller.abort(), { once: true });
+			signal.addEventListener("abort", () => controller.abort(), {
+				once: true,
+			});
 		}
 	}
 
 	const timeoutId = setTimeout(() => controller.abort(), timeout);
 
 	try {
-		const response = await fetch(endpoint, requestOptions);
+		let response;
+		for (let attempt = 0; attempt < 3; attempt += 1) {
+			try {
+				response = await fetch(endpoint, requestOptions);
+				break;
+			} catch (error) {
+				if (error.name === "AbortError" || attempt === 2) throw error;
+				await new Promise((resolve) => setTimeout(resolve, 500));
+			}
+		}
 		clearTimeout(timeoutId);
-		if (!response.ok) {
-			throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+		if (!response?.ok) {
+			throw new Error(`HTTP ${response?.status}: ${response?.statusText}`);
 		}
 		return await response.json();
 	} catch (error) {
@@ -162,7 +176,9 @@ async function api(endpoint, options = {}) {
 			// Don't show alert if the tab-level controller aborted (user switched tabs)
 			if (signal && signal.aborted) return null;
 			const seconds = Math.round(timeout / 1000);
-			alert(`⏱️ Timeout: la petición a ${endpoint} tardó más de ${seconds}s y fue cancelada.`);
+			alert(
+				`⏱️ Timeout: la petición a ${endpoint} tardó más de ${seconds}s y fue cancelada.`,
+			);
 			return null;
 		}
 		console.error(`API error: ${endpoint}`, error);
@@ -249,23 +265,28 @@ function updateSampleTable(rows) {
 	const table = document.getElementById("sample-table");
 	if (!table) return;
 
-	const columns = Object.keys(rows[0]);
-	const displayCols = columns.slice(0, 8); // Show first 8 columns
+	const displayCols = Object.keys(rows[0]).slice(0, 8);
+	const head = document.createElement("thead");
+	const headRow = document.createElement("tr");
+	const body = document.createElement("tbody");
 
-	table.innerHTML = `
-        <thead>
-            <tr>${displayCols.map((c) => `<th>${formatColumnName(c)}</th>`).join("")}</tr>
-        </thead>
-        <tbody>
-            ${rows
-							.map(
-								(row) => `
-                <tr>${displayCols.map((c) => `<td>${formatCellValue(row[c])}</td>`).join("")}</tr>
-            `,
-							)
-							.join("")}
-        </tbody>
-    `;
+	for (const column of displayCols) {
+		const cell = document.createElement("th");
+		cell.textContent = formatColumnName(column);
+		headRow.appendChild(cell);
+	}
+	head.appendChild(headRow);
+
+	for (const row of rows) {
+		const tableRow = document.createElement("tr");
+		for (const column of displayCols) {
+			const cell = document.createElement("td");
+			cell.textContent = formatCellValue(row[column]);
+			tableRow.appendChild(cell);
+		}
+		body.appendChild(tableRow);
+	}
+	table.replaceChildren(head, body);
 }
 
 function formatColumnName(name) {
@@ -288,40 +309,45 @@ async function loadDataDictionary() {
 	const el = document.getElementById("data-dictionary");
 	if (!el) return;
 
-	if (el.style.display === "none") {
-		el.style.display = "block";
-		el.innerHTML = `
-            <h4>Diccionario de Datos</h4>
-            <div class="table-wrapper">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Columna</th>
-                            <th>Tipo</th>
-                            <th>Descripción</th>
-                            <th>Sensible</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${dict.columns
-													.map(
-														(col) => `
-                            <tr>
-                                <td><code>${col.name}</code></td>
-                                <td>${col.type}</td>
-                                <td>${col.description}</td>
-                                <td>${col.sensitive ? "🔒 Sí" : "No"}</td>
-                            </tr>
-                        `,
-													)
-													.join("")}
-                    </tbody>
-                </table>
-            </div>
-        `;
-	} else {
+	if (el.style.display !== "none") {
 		el.style.display = "none";
+		return;
 	}
+
+	const title = document.createElement("h4");
+	title.textContent = "Diccionario de Datos";
+	const wrapper = document.createElement("div");
+	wrapper.className = "table-wrapper";
+	const table = document.createElement("table");
+	table.className = "data-table";
+	const head = document.createElement("thead");
+	const headRow = document.createElement("tr");
+	const body = document.createElement("tbody");
+
+	for (const label of ["Columna", "Tipo", "Descripción", "Sensible"]) {
+		const cell = document.createElement("th");
+		cell.textContent = label;
+		headRow.appendChild(cell);
+	}
+	head.appendChild(headRow);
+	for (const column of dict.columns) {
+		const row = document.createElement("tr");
+		for (const value of [
+			column.name,
+			column.type,
+			column.description,
+			column.sensitive ? "🔒 Sí" : "No",
+		]) {
+			const cell = document.createElement("td");
+			cell.textContent = value;
+			row.appendChild(cell);
+		}
+		body.appendChild(row);
+	}
+	table.append(head, body);
+	wrapper.appendChild(table);
+	el.replaceChildren(title, wrapper);
+	el.style.display = "block";
 }
 
 // ==================== UTILITY ====================

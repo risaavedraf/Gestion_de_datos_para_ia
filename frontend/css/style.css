@@ -1720,3 +1720,53 @@ h4 {
 	padding: 14px;
 	margin-top: 12px;
 }
+
+/* ===== PERFORMANCE ===== */
+
+.section-heading {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 1rem;
+	margin-bottom: 1.5rem;
+}
+
+.section-heading h2 {
+	margin-bottom: 0.25rem;
+}
+
+.section-heading p,
+.empty-state {
+	color: var(--text-secondary);
+}
+
+.performance-chart-container {
+	margin-bottom: 2rem;
+}
+
+.performance-chart-area {
+	height: 320px;
+	position: relative;
+}
+
+.performance-chart-area canvas {
+	display: block;
+}
+
+.empty-state {
+	padding: 1rem;
+	background: var(--bg-secondary);
+	border: 1px dashed var(--border);
+	border-radius: var(--radius-sm);
+	margin-bottom: 1rem;
+}
+
+@media (max-width: 768px) {
+	.section-heading {
+		flex-direction: column;
+	}
+
+	.performance-chart-area {
+		height: 240px;
+	}
+}

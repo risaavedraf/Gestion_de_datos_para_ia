@@ -3,14 +3,16 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    env_file:
+      - .env
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://fraud_user:fraud_pass@db:5432/fraud_db
       - APP_ENV=development
       - LOG_LEVEL=INFO
       - DATA_SAMPLE_SIZE=10000
       - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-change-me-local-admin-token}
+      - DATABASE_URL=postgresql://fraud_user:fraud_pass@db:5432/fraud_db
     depends_on:
       db:
         condition: service_healthy
